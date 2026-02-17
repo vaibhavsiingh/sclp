@@ -13,6 +13,31 @@ extern FILE *yyin;
 Ast *root;          /* Final AST root */
 int main_seen = 0;
 static Data_Type current_decl_type = INT_TYPE;
+
+static Ast_List *append_ast_list(Ast_List *list, Ast *node)
+{
+  if (!node)
+    return list;
+
+  Ast_List *new_node = malloc(sizeof(Ast_List));
+  if (!new_node)
+  {
+    fprintf(stderr, "Out of memory\n");
+    exit(1);
+  }
+  new_node->stmt = node;
+  new_node->next = NULL;
+
+  if (!list)
+    return new_node;
+
+  Ast_List *temp = list;
+  while (temp->next)
+    temp = temp->next;
+  temp->next = new_node;
+
+  return list;
+}
 %}
 
 %union {
@@ -51,6 +76,8 @@ static Data_Type current_decl_type = INT_TYPE;
 %type <ast> constant_as_operand
 %type <dtype> type_specifier
 %type <list> identifier_list
+%type <list> param_list
+%type <list> param_list_opt
 
 %right '?' ':'
 %left OR
@@ -106,16 +133,19 @@ global_declaration
 /* ================= MAIN PROCEDURE ================= */
 
 void_main_def
-    : VOID IDENTIFIER '(' ')' '{'
+    : VOID IDENTIFIER '('
     {
       set_scope(LOCAL_SCOPE);
     }
+      param_list_opt ')'
+      '{'
       statement_list
       '}'
       {
           $$ = make_procedure_ast(
                    $2.lexeme,
-           $7,
+                   $5,
+                   $8,
                    $2.line);
       }
 ;
@@ -168,6 +198,28 @@ identifier_list
       {
       insert_symbol($3.lexeme, current_decl_type);
           $$ = NULL;
+      }
+;
+
+/* ================= PARAMETERS ================= */
+
+param_list_opt
+    : /* empty */
+      { $$ = NULL; }
+    | param_list
+      { $$ = $1; }
+;
+
+param_list
+    : type_specifier IDENTIFIER
+      {
+          Symbol_Table_Entry *entry = insert_symbol($2.lexeme, $1);
+          $$ = append_ast_list(NULL, make_name_ast(entry, $2.line));
+      }
+    | param_list ',' type_specifier IDENTIFIER
+      {
+          Symbol_Table_Entry *entry = insert_symbol($4.lexeme, $3);
+          $$ = append_ast_list($1, make_name_ast(entry, $4.line));
       }
 ;
 

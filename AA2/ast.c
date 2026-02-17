@@ -318,7 +318,7 @@ void sequence_append(Sequence_Ast *seq, Ast *stmt)
 /* Procedure                                                    */
 /* ------------------------------------------------------------ */
 
-Ast *make_procedure_ast(char *name, Ast *body, int line)
+Ast *make_procedure_ast(char *name, Ast_List *params, Ast *body, int line)
 {
     Procedure_Ast *node = checked_malloc(sizeof(Procedure_Ast));
 
@@ -328,6 +328,7 @@ Ast *make_procedure_ast(char *name, Ast *body, int line)
     node->base.print = print_procedure_ast;
 
     node->name = strdup(name);
+    node->params = params;
     node->body = body;
 
     return (Ast *)node;
@@ -600,7 +601,18 @@ static int check_sequence_ast(Ast *ast)
 static int check_procedure_ast(Ast *ast)
 {
     Procedure_Ast *node = (Procedure_Ast *)ast;
-    int ok = check_ast(node->body);
+    int ok = 1;
+
+    Ast_List *param = node->params;
+    while (param)
+    {
+        if (!check_ast(param->stmt))
+            ok = 0;
+        param = param->next;
+    }
+
+    if (!check_ast(node->body))
+        ok = 0;
     ast->data_type = VOID_TYPE;
     return ok;
 }

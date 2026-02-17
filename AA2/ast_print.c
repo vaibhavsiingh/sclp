@@ -265,6 +265,20 @@ void print_procedure_ast(Ast *ast, FILE *file)
     fprintf(file, "Procedure %s\n", proc->name);
 
     indent_level++;
+    if (proc->params)
+    {
+        print_indent(file);
+        fprintf(file, "Params\n");
+
+        indent_level++;
+        Ast_List *param = proc->params;
+        while (param)
+        {
+            param->stmt->print(param->stmt, file);
+            param = param->next;
+        }
+        indent_level--;
+    }
     proc->body->print(proc->body, file);
     indent_level--;
 }
