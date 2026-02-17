@@ -35,8 +35,8 @@
    especially those whose name start with YY_ or yy_.  They are
    private implementation details that can be changed or removed.  */
 
-#ifndef YY_YY_Y_TAB_H_INCLUDED
-# define YY_YY_Y_TAB_H_INCLUDED
+#ifndef YY_YY_MINI_PARSER_TAB_H_INCLUDED
+# define YY_YY_MINI_PARSER_TAB_H_INCLUDED
 /* Debug traces.  */
 #ifndef YYDEBUG
 # define YYDEBUG 0
@@ -44,6 +44,12 @@
 #if YYDEBUG
 extern int yydebug;
 #endif
+/* "%code requires" blocks.  */
+#line 15 "mini_parser.y"
+
+    #include "ast.h"
+
+#line 53 "mini_parser.tab.h"
 
 /* Token kinds.  */
 #ifndef YYTOKENTYPE
@@ -60,47 +66,33 @@ extern int yydebug;
     STRING = 261,                  /* STRING  */
     VOID = 262,                    /* VOID  */
     IDENTIFIER = 263,              /* IDENTIFIER  */
-    INTEGER_NUMBER = 264,          /* INTEGER_NUMBER  */
-    FLOAT_NUMBER = 265,            /* FLOAT_NUMBER  */
-    STRING_CONSTANT = 266,         /* STRING_CONSTANT  */
-    ASSIGNMENT = 267,              /* ASSIGNMENT  */
-    PRINT = 268,                   /* PRINT  */
-    READ = 269,                    /* READ  */
-    UMINUS = 270                   /* UMINUS  */
+    ASSIGNMENT = 264,              /* ASSIGNMENT  */
+    READ = 265,                    /* READ  */
+    PRINT = 266,                   /* PRINT  */
+    FLOAT_NUMBER = 267,            /* FLOAT_NUMBER  */
+    INTEGER_NUMBER = 268,          /* INTEGER_NUMBER  */
+    STRING_CONSTANT = 269          /* STRING_CONSTANT  */
   };
   typedef enum yytokentype yytoken_kind_t;
 #endif
-/* Token kinds.  */
-#define YYEMPTY -2
-#define YYEOF 0
-#define YYerror 256
-#define YYUNDEF 257
-#define INT 258
-#define FLOAT 259
-#define BOOL 260
-#define STRING 261
-#define VOID 262
-#define IDENTIFIER 263
-#define INTEGER_NUMBER 264
-#define FLOAT_NUMBER 265
-#define STRING_CONSTANT 266
-#define ASSIGNMENT 267
-#define PRINT 268
-#define READ 269
-#define UMINUS 270
 
 /* Value type.  */
 #if ! defined YYSTYPE && ! defined YYSTYPE_IS_DECLARED
 union YYSTYPE
 {
-#line 21 "parser.y"
+#line 19 "mini_parser.y"
 
     struct {
         char *lexeme;
         int line;
     } token;
 
-#line 104 "y.tab.h"
+    Ast* ast;
+    StatementAst* stmt;
+    StatementListAst* stmt_list;
+    BinaryOpAst* bop;
+
+#line 96 "mini_parser.tab.h"
 
 };
 typedef union YYSTYPE YYSTYPE;
@@ -115,4 +107,4 @@ extern YYSTYPE yylval;
 int yyparse (void);
 
 
-#endif /* !YY_YY_Y_TAB_H_INCLUDED  */
+#endif /* !YY_YY_MINI_PARSER_TAB_H_INCLUDED  */
