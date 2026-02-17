@@ -17,6 +17,28 @@ extern void dump_token(const char *type, const char *lexeme, int line);
 
 /* Parser globals */
 int main_seen = 0;
+Ast_List *main_decl_params = NULL;
+
+/* Helper function to compare parameter lists */
+int compare_param_lists(Ast_List *decl_params, Ast_List *def_params) {
+    Ast_List *d = decl_params;
+    Ast_List *f = def_params;
+    
+    while (d != NULL && f != NULL) {
+        Name_Ast *decl_param = (Name_Ast *)d->stmt;
+        Name_Ast *def_param = (Name_Ast *)f->stmt;
+        
+        if (decl_param->entry->type != def_param->entry->type) {
+            return 0;  /* Types don't match */
+        }
+        
+        d = d->next;
+        f = f->next;
+    }
+    
+    /* Both should be NULL (same length) */
+    return (d == NULL && f == NULL);
+}
 
 Ast *root;
 static Data_Type current_decl_type = INT_TYPE;
@@ -88,6 +110,7 @@ global_decl_statement_list
               YYERROR;
           }
           main_seen = 1;
+          clear_local_scope();
       }
     | var_decl_stmt
     | main_decl
@@ -97,13 +120,36 @@ global_decl_statement_list
               YYERROR;
           }
           main_seen = 1;
+          clear_local_scope();
       }
     ;
 
 
 main_decl
-	: named_type IDENTIFIER '(' formal_param_list ')' ';'    
-	| named_type IDENTIFIER '(' ')' ';'                       
+	: named_type IDENTIFIER '(' formal_param_list ')' ';'
+      {
+          if (strcmp($2.lexeme, "main") != 0) {
+              yyerror("function declaration must be 'main'");
+              YYERROR;
+          }
+          if (current_decl_type != VOID_TYPE) {
+              yyerror("main function must have void return type");
+              YYERROR;
+          }
+          main_decl_params = $4;
+      }
+	| named_type IDENTIFIER '(' ')' ';'
+      {
+          if (strcmp($2.lexeme, "main") != 0) {
+              yyerror("function declaration must be 'main'");
+              YYERROR;
+          }
+          if (current_decl_type != VOID_TYPE) {
+              yyerror("main function must have void return type");
+              YYERROR;
+          }
+          main_decl_params = NULL;  /* No parameters */
+      }
     ;
 
 formal_param_list
@@ -184,6 +230,19 @@ named_type
 void_main_def
     : named_type IDENTIFIER '(' ')' '{'
       {
+          if (strcmp($2.lexeme, "main") != 0) {
+              yyerror("function definition must be 'main'");
+              YYERROR;
+          }
+          if (current_decl_type != VOID_TYPE) {
+              yyerror("main function must have void return type");
+              YYERROR;
+          }
+          /* Check if declaration exists and parameters match */
+          if (main_seen && main_decl_params != NULL) {
+              yyerror("function definition parameter list does not match declaration");
+              YYERROR;
+          }
           set_scope(LOCAL_SCOPE);
       }
       optional_local_var_decl_stmt_list
@@ -195,6 +254,19 @@ void_main_def
       }
     | named_type IDENTIFIER '(' formal_param_list ')' '{'
       {
+          if (strcmp($2.lexeme, "main") != 0) {
+              yyerror("function definition must be 'main'");
+              YYERROR;
+          }
+          if (current_decl_type != VOID_TYPE) {
+              yyerror("main function must have void return type");
+              YYERROR;
+          }
+          /* Check if declaration exists and parameters match */
+          if (main_seen && !compare_param_lists(main_decl_params, $4)) {
+              yyerror("function definition parameter list does not match declaration");
+              YYERROR;
+          }
           set_scope(LOCAL_SCOPE);
       }
       optional_local_var_decl_stmt_list
