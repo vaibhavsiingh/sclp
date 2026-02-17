@@ -103,6 +103,36 @@ Symbol_Table_Entry *insert_symbol(char *name, Data_Type type) {
     return entry;
 }
 
+/* -------- Update Scope -------- */
+
+void update_symbol_scope(Symbol_Table_Entry *entry, Scope_Type new_scope) {
+    if (!entry)
+        return;
+
+    /* Remove from current table */
+    Symbol_Table_Entry **old_table =
+        (entry->scope == GLOBAL_SCOPE) ? &global_table : &local_table;
+
+    Symbol_Table_Entry **ptr = old_table;
+    while (*ptr && *ptr != entry) {
+        ptr = &((*ptr)->next);
+    }
+
+    if (*ptr) {
+        *ptr = entry->next;
+    }
+
+    /* Update scope */
+    entry->scope = new_scope;
+
+    /* Insert into new table */
+    Symbol_Table_Entry **new_table =
+        (new_scope == GLOBAL_SCOPE) ? &global_table : &local_table;
+
+    entry->next = *new_table;
+    *new_table = entry;
+}
+
 /* -------- Debug Print -------- */
 
 void print_symbol_table() {

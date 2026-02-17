@@ -81,8 +81,7 @@ int main(int argc, char **argv)
     {
         if (check_ast(root))            
             root->print(root, stdout);
-        else{
-            root->print(root, stdout);
+        else{            
             return 1;
         }
     }

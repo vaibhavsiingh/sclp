@@ -52,14 +52,17 @@ static Data_Type current_decl_type = INT_TYPE;
 %type <ast> statement_list
 %type <ast> void_main_def
 %type <dtype> param_type
+%type <ast> formal_param
+%type <list> formal_param_list
 
 %right '?' ':'
 %left OR
 %left AND
 %left EQ NE LT LE GT GE
+%right NOT
 %left '+' '-'
 %left '*' '/'
-%right UMINUS NOT
+%right UMINUS 
 
 %%
 
@@ -106,14 +109,36 @@ main_decl
     ;
 
 formal_param_list
-	: formal_param_list ',' formal_param           
-	| formal_param                                 
+	: formal_param_list ',' formal_param
+      {
+          Ast_List *new_node = malloc(sizeof(Ast_List));
+          new_node->stmt = $3;
+          new_node->next = NULL;
+          
+          if ($1 == NULL) {
+              $$ = new_node;
+          } else {
+              Ast_List *temp = $1;
+              while (temp->next)
+                  temp = temp->next;
+              temp->next = new_node;
+              $$ = $1;
+          }
+      }
+	| formal_param
+      {
+          Ast_List *new_node = malloc(sizeof(Ast_List));
+          new_node->stmt = $1;
+          new_node->next = NULL;
+          $$ = new_node;
+      }
 ;
 
 formal_param
     : param_type IDENTIFIER
-      {          
-          insert_symbol($2.lexeme, $1);
+      {
+          Symbol_Table_Entry *entry = insert_symbol($2.lexeme, $1);
+          $$ = make_name_ast(entry, $2.line);
       }
     ;
 
@@ -165,6 +190,17 @@ void_main_def
       '}'
       {
           $$ = make_procedure_ast($2.lexeme, NULL, $8, $2.line);
+          set_scope(GLOBAL_SCOPE);
+      }
+    | named_type MAIN '(' formal_param_list ')' '{'
+      {
+          set_scope(LOCAL_SCOPE);
+      }
+      optional_local_var_decl_stmt_list
+      statement_list
+      '}'
+      {
+          $$ = make_procedure_ast($2.lexeme, $4, $9, $2.line);
           set_scope(GLOBAL_SCOPE);
       }
     ;

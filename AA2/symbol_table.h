@@ -5,14 +5,16 @@
 
 /* -------- Scope Type -------- */
 
-typedef enum {
+typedef enum
+{
     GLOBAL_SCOPE,
     LOCAL_SCOPE
 } Scope_Type;
 
 /* -------- Symbol Entry -------- */
 
-typedef struct Symbol_Table_Entry {
+typedef struct Symbol_Table_Entry
+{
     char *name;
     Data_Type type;
     Scope_Type scope;
@@ -29,6 +31,7 @@ void set_scope(Scope_Type scope);
 
 Symbol_Table_Entry *insert_symbol(char *name, Data_Type type);
 Symbol_Table_Entry *lookup_symbol(char *name);
+void update_symbol_scope(Symbol_Table_Entry *entry, Scope_Type new_scope);
 
 void clear_local_scope();
 
