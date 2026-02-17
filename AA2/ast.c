@@ -487,7 +487,8 @@ static int check_relational_ast(Ast *ast)
         ok = 0;
     if (!ok)
         return 0;
-
+    
+    //node->rhs->print(node->rhs,stdout);
     if (!is_numeric(node->lhs->data_type) ||
         !is_numeric(node->rhs->data_type))
     {

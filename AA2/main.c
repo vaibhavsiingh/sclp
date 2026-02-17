@@ -79,17 +79,20 @@ int main(int argc, char **argv)
 
     if (yyparse() == 0 && root)
     {
-        if (check_ast(root))
+        if (check_ast(root))            
             root->print(root, stdout);
-        else
+        else{
+            root->print(root, stdout);
             return 1;
+        }
     }
 
     if (tokfile)
         fclose(tokfile);
-
+    
+    
     destroy_symbol_table();
     fclose(yyin);
-
+    
     return 0;
 }

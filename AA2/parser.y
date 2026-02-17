@@ -10,34 +10,16 @@ void yyerror(const char *s);
 extern int yylineno;
 extern FILE *yyin;
 
-Ast *root;          /* Final AST root */
+/* External declarations from main.c */
+extern int dump_tokens;
+extern FILE *tokfile;
+extern void dump_token(const char *type, const char *lexeme, int line);
+
+/* Parser globals */
 int main_seen = 0;
+
+Ast *root;
 static Data_Type current_decl_type = INT_TYPE;
-
-static Ast_List *append_ast_list(Ast_List *list, Ast *node)
-{
-  if (!node)
-    return list;
-
-  Ast_List *new_node = malloc(sizeof(Ast_List));
-  if (!new_node)
-  {
-    fprintf(stderr, "Out of memory\n");
-    exit(1);
-  }
-  new_node->stmt = node;
-  new_node->next = NULL;
-
-  if (!list)
-    return new_node;
-
-  Ast_List *temp = list;
-  while (temp->next)
-    temp = temp->next;
-  temp->next = new_node;
-
-  return list;
-}
 %}
 
 %union {
@@ -45,217 +27,204 @@ static Ast_List *append_ast_list(Ast_List *list, Ast *node)
         char *lexeme;
         int line;
     } token;
-
     Ast *ast;
     Ast_List *list;
   Data_Type dtype;
 }
 
-%token <token> INT FLOAT BOOL STRING VOID MAIN
+%token <token> INT FLOAT BOOL STRING VOID
 %token <token> IDENTIFIER
 %token <token> INTEGER_NUMBER FLOAT_NUMBER STRING_CONSTANT
 %token <token> ASSIGNMENT
-%token <token> PRINT READ
-%token <token> LT LE GT GE EQ NE
+%token <token> PRINT READ MAIN
+%token <token> EQ NE LT LE GT GE
 %token <token> AND OR NOT
 
-%type <ast> program
-%type <ast> global_decls
-%type <ast> global_declaration
-%type <ast> void_main_def
-%type <ast> statement_list
+%type <token> named_type
+%type <token> variable_name
+%type <ast> variable_as_operand
+%type <ast> expression
+%type <ast> constant_as_operand
 %type <ast> statement
 %type <ast> assignment_statement
-%type <ast> declaration_statement
-%type <ast> read_statement
 %type <ast> print_statement
-%type <ast> expression
-%type <ast> rel_expression
-%type <ast> variable_name
-%type <ast> variable_as_operand
-%type <ast> constant_as_operand
-%type <dtype> type_specifier
-%type <list> identifier_list
-%type <list> param_list
-%type <list> param_list_opt
+%type <ast> read_statement
+%type <ast> statement_list
+%type <ast> void_main_def
+%type <dtype> param_type
 
 %right '?' ':'
 %left OR
 %left AND
-%right NOT
-%nonassoc LT LE GT GE EQ NE
+%left EQ NE LT LE GT GE
 %left '+' '-'
 %left '*' '/'
-%right UMINUS 
+%right UMINUS NOT
 
 %%
 
 program
-  : global_decls void_main_def
+    : global_decl_statement_list void_main_def
       {
-        Program_Ast *prog =
-        (Program_Ast*) make_program_ast($2->lineno);
-
-      program_append(prog, $2);
-          root = (Ast*)prog;
-          $$ = root;
+          root = make_program_ast(yylineno);
+          program_append((Program_Ast *)root, $2);
       }
+    | void_main_def
+      {
+          root = make_program_ast(yylineno);
+          program_append((Program_Ast *)root, $1);
+      }
+    ;
+
+global_decl_statement_list
+    : global_decl_statement_list var_decl_stmt
+    | global_decl_statement_list main_decl
+      {
+          if (main_seen) {
+              yyerror("multiple declarations/definitions of functions");
+              YYERROR;
+          }
+          main_seen = 1;
+      }
+    | var_decl_stmt
+    | main_decl
+      {
+          if (main_seen) {
+              yyerror("multiple declarations/definitions of main");
+              YYERROR;
+          }
+          main_seen = 1;
+      }
+    ;
+
+
+main_decl
+	: named_type IDENTIFIER '(' formal_param_list ')' ';'    
+	| named_type IDENTIFIER '(' ')' ';'
+	| named_type MAIN '(' formal_param_list ')' ';'
+	| named_type MAIN '(' ')' ';'                       
+    ;
+
+formal_param_list
+	: formal_param_list ',' formal_param           
+	| formal_param                                 
 ;
 
-global_decls
-  : /* empty */
-    {
-      set_scope(GLOBAL_SCOPE);
-      $$ = NULL;
-    }
-  | global_decls global_declaration
-    {
-      $$ = NULL;
-    }
-;
+formal_param
+    : param_type IDENTIFIER
+      {          
+          insert_symbol($2.lexeme, $1);
+      }
+    ;
 
-global_declaration
-  : type_specifier
-    {
-      set_scope(GLOBAL_SCOPE);
-      current_decl_type = $1;
-    }
-    identifier_list ';'
-    {
-      $$ = NULL;
-    }
-  | VOID IDENTIFIER '(' ')' ';'
-    {
-      $$ = NULL;
-    }
-;
 
-/* ================= MAIN PROCEDURE ================= */
+param_type
+    : INT       { $$ = INT_TYPE; }
+    | FLOAT     { $$ = FLOAT_TYPE; }
+    | BOOL      { $$ = BOOL_TYPE; }
+    | STRING    { $$ = STRING_TYPE; }
+
+/* var_decl_stmt_list
+    : var_decl_stmt
+    | var_decl_stmt_list var_decl_stmt
+; */
+
+var_decl_stmt
+    : named_type var_decl_item_list ';' 
+    ;
+
+var_decl_item_list
+    : var_decl_item_list ',' var_decl_item
+    | var_decl_item
+    ;
+
+var_decl_item
+    : IDENTIFIER
+      {     
+          //printf("%s, %d\n", $1.lexeme, (int)current_decl_type);
+          insert_symbol($1.lexeme, current_decl_type);
+          //print_symbol_table();
+      }
+    ;
+
+named_type
+    : INT    { current_decl_type = INT_TYPE; }
+    | FLOAT  { current_decl_type = FLOAT_TYPE; }
+    | BOOL   { current_decl_type = BOOL_TYPE; }
+    | STRING { current_decl_type = STRING_TYPE; }
+    | VOID   { current_decl_type = VOID_TYPE; }
+    ;
 
 void_main_def
-    : VOID MAIN '('
-    {
-      set_scope(LOCAL_SCOPE);
-    }
-      param_list_opt ')'
-      '{'
+    : named_type MAIN '(' ')' '{'
+      {
+          set_scope(LOCAL_SCOPE);
+      }
+      optional_local_var_decl_stmt_list
       statement_list
       '}'
       {
-          $$ = make_procedure_ast(
-                   $2.lexeme,
-                   $5,
-                   $8,
-                   $2.line);
+          $$ = make_procedure_ast($2.lexeme, NULL, $8, $2.line);
+          set_scope(GLOBAL_SCOPE);
       }
-;
+    ;
 
-/* ================= STATEMENTS ================= */
+optional_local_var_decl_stmt_list
+    : var_decl_stmt_list
+    | /* empty */
+    ;
+
+var_decl_stmt_list
+    : var_decl_stmt_list var_decl_stmt
+    | var_decl_stmt
+    ;
 
 statement_list
     : statement_list statement
       {
-          sequence_append((Sequence_Ast*)$1, $2);
-          $$ = $1;
+          if ($1 == NULL) {
+              $$ = make_sequence_ast(yylineno);
+          } else {
+              $$ = $1;
+          }
+          sequence_append((Sequence_Ast *)$$, $2);
       }
     | /* empty */
       {
-          $$ = make_sequence_ast(yylineno);
+          $$ = NULL;
       }
-;
+    ;
 
 statement
-    : declaration_statement
-      { $$ = $1; }
-    | assignment_statement
-      { $$ = $1; }
-    | read_statement
-      { $$ = $1; }
-    | print_statement
-      { $$ = $1; }
-;
-
-/* ================= DECLARATIONS ================= */
-
-declaration_statement
-  : type_specifier
-    {
-      current_decl_type = $1;
-    }
-    identifier_list ';'
-      {
-          $$ = NULL;
-      }
-;
-
-identifier_list
-    : IDENTIFIER
-      {
-      insert_symbol($1.lexeme, current_decl_type);
-          $$ = NULL;
-      }
-    | identifier_list ',' IDENTIFIER
-      {
-      insert_symbol($3.lexeme, current_decl_type);
-          $$ = NULL;
-      }
-;
-
-/* ================= PARAMETERS ================= */
-
-param_list_opt
-    : /* empty */
-      { $$ = NULL; }
-    | param_list
-      { $$ = $1; }
-;
-
-param_list
-    : type_specifier IDENTIFIER
-      {
-          Symbol_Table_Entry *entry = insert_symbol($2.lexeme, $1);
-          $$ = append_ast_list(NULL, make_name_ast(entry, $2.line));
-      }
-    | param_list ',' type_specifier IDENTIFIER
-      {
-          Symbol_Table_Entry *entry = insert_symbol($4.lexeme, $3);
-          $$ = append_ast_list($1, make_name_ast(entry, $4.line));
-      }
-;
-
-type_specifier
-    : INT    { $$ = INT_TYPE; }
-    | FLOAT  { $$ = FLOAT_TYPE; }
-    | BOOL   { $$ = BOOL_TYPE; }
-    | STRING { $$ = STRING_TYPE; }
-;
-
-/* ================= ASSIGNMENT ================= */
+    : assignment_statement  { $$ = $1; }
+    | print_statement       { $$ = $1; }
+    | read_statement        { $$ = $1; }
+    ;
 
 assignment_statement
     : variable_as_operand ASSIGNMENT expression ';'
       {
           $$ = make_assignment_ast($1, $3, $2.line);
       }
-;
+    ;
 
-/* ================= READ / PRINT ================= */
+variable_as_operand
+    : variable_name
+      {
+          Symbol_Table_Entry *entry = lookup_symbol($1.lexeme);
+          if (!entry) {
+              char buf[256];
+              snprintf(buf, sizeof(buf), "Variable '%s' not declared", $1.lexeme);
+              yyerror(buf);
+              YYERROR;
+          }
+          $$ = make_name_ast(entry, $1.line);
+      }
+    ;
 
-read_statement
-  : READ variable_as_operand ';'
-    {
-      $$ = make_read_ast($2, $1.line);
-    }
-;
-
-print_statement
-  : PRINT expression ';'
-    {
-      $$ = make_print_ast($2, $1.line);
-    }
-;
-
-/* ================= EXPRESSIONS ================= */
+variable_name
+    : IDENTIFIER
+    ;
 
 expression
     : expression '+' expression
@@ -274,46 +243,23 @@ expression
       {
           $$ = make_binary_ast(AST_DIV, $1, $3, yylineno);
       }
-    | '-' expression %prec UMINUS
+    | '-' expression    %prec UMINUS
       {
           $$ = make_unary_ast(AST_UMINUS, $2, yylineno);
-      }
-    | '(' expression ')'
-      {
-          $$ = $2;
-      }
-    | variable_as_operand
-      {
-          $$ = $1;
-      }
-    | constant_as_operand
-      {
-          $$ = $1;
-      }
-    | rel_expression
-      {
-          $$ = $1;
-      }
-    | expression AND expression
-      {
-          $$ = make_logical_ast($1, LOGICAL_AND, $3, yylineno);
-      }
-    | expression OR expression
-      {
-          $$ = make_logical_ast($1, LOGICAL_OR, $3, yylineno);
       }
     | NOT expression
       {
           $$ = make_unary_ast(AST_NOT, $2, yylineno);
       }
-    | expression '?' expression ':' expression
+    | expression EQ expression
       {
-          $$ = make_if_ast($1, $3, $5, yylineno);
+          $$ = make_relational_ast($1, REL_EQ, $3, yylineno);
       }
-;
-
-rel_expression
-    : expression LT expression
+    | expression NE expression
+      {
+          $$ = make_relational_ast($1, REL_NE, $3, yylineno);
+      }
+    | expression LT expression
       {
           $$ = make_relational_ast($1, REL_LT, $3, yylineno);
       }
@@ -329,33 +275,31 @@ rel_expression
       {
           $$ = make_relational_ast($1, REL_GE, $3, yylineno);
       }
-    | expression EQ expression
+    | expression AND expression
       {
-          $$ = make_relational_ast($1, REL_EQ, $3, yylineno);
+          $$ = make_logical_ast($1, LOGICAL_AND, $3, yylineno);
       }
-    | expression NE expression
+    | expression OR expression
       {
-          $$ = make_relational_ast($1, REL_NE, $3, yylineno);
+          $$ = make_logical_ast($1, LOGICAL_OR, $3, yylineno);
       }
-;
-
-/* ================= VARIABLES ================= */
-
-variable_as_operand
-    : variable_name
-      { $$ = $1; }
-;
-
-variable_name
-    : IDENTIFIER
+    | expression '?' expression ':' expression
       {
-          $$ = make_name_ast(
-                   lookup_symbol($1.lexeme),
-                   $1.line);
+          $$ = make_if_ast($1, $3, $5, yylineno);
       }
-;
-
-/* ================= CONSTANTS ================= */
+    | '(' expression ')'
+      {
+          $$ = $2;
+      }
+    | variable_as_operand
+      {
+          $$ = $1;
+      }
+    | constant_as_operand
+      {
+          $$ = $1;
+      }
+    ;
 
 constant_as_operand
     : INTEGER_NUMBER
@@ -370,7 +314,29 @@ constant_as_operand
       {
           $$ = make_number_ast($1.lexeme, STRING_TYPE, $1.line);
       }
-;
+    ;
+
+print_statement
+    : PRINT expression ';'
+      {
+          $$ = make_print_ast($2, $1.line);
+      }
+    ;
+
+read_statement
+    : READ variable_name ';'
+      {
+          Symbol_Table_Entry *entry = lookup_symbol($2.lexeme);
+          if (!entry) {
+              char buf[256];
+              snprintf(buf, sizeof(buf), "Variable '%s' not declared", $2.lexeme);
+              yyerror(buf);
+              YYERROR;
+          }
+          Ast *var = make_name_ast(entry, $2.line);
+          $$ = make_read_ast(var, $1.line);
+      }
+    ;
 
 %%
 
