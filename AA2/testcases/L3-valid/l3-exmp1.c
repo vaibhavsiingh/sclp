@@ -1,4 +1,4 @@
-void main(bool num1)
+void main()
 {
     int num1,num2,greater;
     read num1;

@@ -58,8 +58,8 @@ static Data_Type current_decl_type = INT_TYPE;
 %right '?' ':'
 %left OR
 %left AND
-%left EQ NE LT LE GT GE
 %right NOT
+%left EQ NE LT LE GT GE
 %left '+' '-'
 %left '*' '/'
 %right UMINUS 
@@ -111,6 +111,7 @@ main_decl
 formal_param_list
 	: formal_param_list ',' formal_param
       {
+          
           Ast_List *new_node = malloc(sizeof(Ast_List));
           new_node->stmt = $3;
           new_node->next = NULL;
@@ -124,6 +125,7 @@ formal_param_list
               temp->next = new_node;
               $$ = $1;
           }
+          
       }
 	| formal_param
       {
@@ -136,9 +138,10 @@ formal_param_list
 
 formal_param
     : param_type IDENTIFIER
-      {
+      {   set_scope(LOCAL_SCOPE);
           Symbol_Table_Entry *entry = insert_symbol($2.lexeme, $1);
           $$ = make_name_ast(entry, $2.line);
+          set_scope(GLOBAL_SCOPE);
       }
     ;
 

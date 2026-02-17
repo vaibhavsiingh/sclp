@@ -76,7 +76,7 @@ Symbol_Table_Entry *lookup_symbol(char *name) {
 /* -------- Insert -------- */
 
 Symbol_Table_Entry *insert_symbol(char *name, Data_Type type) {
-
+    printf("adding %s scope = %d \n", name, (int)current_scope);
     Symbol_Table_Entry **table =
         (current_scope == GLOBAL_SCOPE)
             ? &global_table

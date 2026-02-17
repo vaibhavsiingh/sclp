@@ -1,5 +1,5 @@
 
-void main(int c)
+void main()
 {
 	int x, y;
 	int c, b;
