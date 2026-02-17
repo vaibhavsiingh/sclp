@@ -24,5 +24,6 @@ lex.yy.c: scanner.l y.tab.h
 
 clean:
 	rm -f $(TARGET) $(OBJS) y.tab.c y.tab.h lex.yy.c
+	find . -name "*.toks" -delete
 
 .PHONY: all clean

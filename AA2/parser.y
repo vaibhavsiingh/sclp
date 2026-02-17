@@ -51,7 +51,7 @@ static Ast_List *append_ast_list(Ast_List *list, Ast *node)
   Data_Type dtype;
 }
 
-%token <token> INT FLOAT BOOL STRING VOID
+%token <token> INT FLOAT BOOL STRING VOID MAIN
 %token <token> IDENTIFIER
 %token <token> INTEGER_NUMBER FLOAT_NUMBER STRING_CONSTANT
 %token <token> ASSIGNMENT
@@ -133,7 +133,7 @@ global_declaration
 /* ================= MAIN PROCEDURE ================= */
 
 void_main_def
-    : VOID IDENTIFIER '('
+    : VOID MAIN '('
     {
       set_scope(LOCAL_SCOPE);
     }

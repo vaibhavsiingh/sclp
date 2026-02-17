@@ -57,6 +57,13 @@ whitespace [ \t\r]
     return VOID;
 }
 
+"main" {
+    yylval.token.lexeme = strdup(yytext);
+    yylval.token.line = yylineno;
+    dump_token("MAIN", yytext, yylineno);
+    return MAIN;
+}
+
 "=" {
     yylval.token.lexeme = strdup(yytext);
     yylval.token.line = yylineno;
