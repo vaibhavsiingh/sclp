@@ -36,7 +36,7 @@ static Data_Type current_decl_type = INT_TYPE;
 %token <token> IDENTIFIER
 %token <token> INTEGER_NUMBER FLOAT_NUMBER STRING_CONSTANT
 %token <token> ASSIGNMENT
-%token <token> PRINT READ MAIN
+%token <token> PRINT READ
 %token <token> EQ NE LT LE GT GE
 %token <token> AND OR NOT
 
@@ -103,9 +103,7 @@ global_decl_statement_list
 
 main_decl
 	: named_type IDENTIFIER '(' formal_param_list ')' ';'    
-	| named_type IDENTIFIER '(' ')' ';'
-	| named_type MAIN '(' formal_param_list ')' ';'
-	| named_type MAIN '(' ')' ';'                       
+	| named_type IDENTIFIER '(' ')' ';'                       
     ;
 
 formal_param_list
@@ -184,7 +182,7 @@ named_type
     ;
 
 void_main_def
-    : named_type MAIN '(' ')' '{'
+    : named_type IDENTIFIER '(' ')' '{'
       {
           set_scope(LOCAL_SCOPE);
       }
@@ -195,7 +193,7 @@ void_main_def
           $$ = make_procedure_ast($2.lexeme, NULL, $8, $2.line);
           set_scope(GLOBAL_SCOPE);
       }
-    | named_type MAIN '(' formal_param_list ')' '{'
+    | named_type IDENTIFIER '(' formal_param_list ')' '{'
       {
           set_scope(LOCAL_SCOPE);
       }
