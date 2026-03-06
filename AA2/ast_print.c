@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include "ast_print.h"
 #include "symbol_table.h"
 
@@ -11,6 +12,75 @@ static void print_indent(FILE *file)
 {
     for (int i = 0; i < indent_level; i++)
         fprintf(file, "  ");
+}
+
+/* ================= TYPE CONVERSION ================= */
+
+static const char *data_type_to_string(Data_Type type)
+{
+    switch (type)
+    {
+    case INT_TYPE:
+        return "int";
+    case FLOAT_TYPE:
+        return "float";
+    case BOOL_TYPE:
+        return "bool";
+    case STRING_TYPE:
+        return "string";
+    case VOID_TYPE:
+        return "void";
+    default:
+        return "unknown";
+    }
+}
+
+/* Recursively determine the data type of an AST expression */
+static const char *get_expr_type(Ast *ast)
+{
+    if (!ast)
+        return "unknown";
+
+    switch (ast->kind)
+    {
+    case AST_NAME:
+    {
+        Name_Ast *name = (Name_Ast *)ast;
+        if (name->entry)
+            return data_type_to_string(name->entry->type);
+        return "unknown";
+    }
+    case AST_NUMBER:
+    {
+        Number_Ast *num = (Number_Ast *)ast;
+        /* Check if number contains decimal point for float detection */
+        if (strchr(num->value, '.'))
+            return "float";
+        else
+            return "int";
+    }
+    case AST_PLUS:
+    case AST_MINUS:
+    case AST_MULT:
+    case AST_DIV:
+    {
+        Binary_Expr_Ast *bin = (Binary_Expr_Ast *)ast;
+        const char *lhs_type = get_expr_type(bin->lhs);
+        const char *rhs_type = get_expr_type(bin->rhs);
+
+        /* If either operand is float, result is float; otherwise int */
+        if (strcmp(lhs_type, "float") == 0 || strcmp(rhs_type, "float") == 0)
+            return "float";
+        return "int";
+    }
+    case AST_UMINUS:
+    {
+        Unary_Expr_Ast *un = (Unary_Expr_Ast *)ast;
+        return get_expr_type(un->child);
+    }
+    default:
+        return "unknown";
+    }
 }
 
 /* ================= NUMBER ================= */
@@ -31,7 +101,7 @@ void print_name_ast(Ast *ast, FILE *file)
 
     print_indent(file);
     if (name->entry)
-        fprintf(file, "Name %s\n", name->entry->name);
+        fprintf(file, "Name %s : %s\n", name->entry->name, data_type_to_string(name->entry->type));
     else
         fprintf(file, "Name <undef>\n");
 }
@@ -41,26 +111,35 @@ void print_name_ast(Ast *ast, FILE *file)
 void print_binary_ast(Ast *ast, FILE *file)
 {
     Binary_Expr_Ast *bin = (Binary_Expr_Ast *)ast;
+    const char *op_name = NULL;
+    const char *expr_type = NULL;
 
     print_indent(file);
 
     switch (ast->kind)
     {
     case AST_PLUS:
-        fprintf(file, "Plus\n");
+        op_name = "Plus";
         break;
     case AST_MINUS:
-        fprintf(file, "Minus\n");
+        op_name = "Minus";
         break;
     case AST_MULT:
-        fprintf(file, "Mult\n");
+        op_name = "Mult";
         break;
     case AST_DIV:
-        fprintf(file, "Div\n");
+        op_name = "Div";
         break;
     default:
-        fprintf(file, "Binary\n");
+        op_name = "Binary";
     }
+
+    /* Get the type of the entire expression */
+    expr_type = get_expr_type(ast);
+    if (expr_type && strcmp(expr_type, "unknown") != 0)
+        fprintf(file, "%s : %s\n", op_name, expr_type);
+    else
+        fprintf(file, "%s\n", op_name);
 
     indent_level++;
     bin->lhs->print(bin->lhs, file);

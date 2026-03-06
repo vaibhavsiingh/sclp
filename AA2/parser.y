@@ -12,6 +12,8 @@ extern FILE *yyin;
 
 /* External declarations from main.c */
 extern int dump_tokens;
+extern int sa_scan;
+extern int sa_parse;
 extern FILE *tokfile;
 extern void dump_token(const char *type, const char *lexeme, int line);
 
@@ -105,7 +107,7 @@ global_decl_statement_list
     : global_decl_statement_list var_decl_stmt
     | global_decl_statement_list main_decl
       {
-          if (main_seen) {
+          if (!sa_parse && main_seen) {
               yyerror("multiple declarations/definitions of functions");
               YYERROR;
           }
@@ -115,7 +117,7 @@ global_decl_statement_list
     | var_decl_stmt
     | main_decl
       {
-          if (main_seen) {
+          if (!sa_parse && main_seen) {
               yyerror("multiple declarations/definitions of main");
               YYERROR;
           }
@@ -128,25 +130,29 @@ global_decl_statement_list
 main_decl
 	: named_type IDENTIFIER '(' formal_param_list ')' ';'
       {
-          if (strcmp($2.lexeme, "main") != 0) {
-              yyerror("function declaration must be 'main'");
-              YYERROR;
-          }
-          if (current_decl_type != VOID_TYPE) {
-              yyerror("main function must have void return type");
-              YYERROR;
+          if (!sa_parse) {
+              if (strcmp($2.lexeme, "main") != 0) {
+                  yyerror("function declaration must be 'main'");
+                  YYERROR;
+              }
+              if (current_decl_type != VOID_TYPE) {
+                  yyerror("main function must have void return type");
+                  YYERROR;
+              }
           }
           main_decl_params = $4;
       }
 	| named_type IDENTIFIER '(' ')' ';'
       {
-          if (strcmp($2.lexeme, "main") != 0) {
-              yyerror("function declaration must be 'main'");
-              YYERROR;
-          }
-          if (current_decl_type != VOID_TYPE) {
-              yyerror("main function must have void return type");
-              YYERROR;
+          if (!sa_parse) {
+              if (strcmp($2.lexeme, "main") != 0) {
+                  yyerror("function declaration must be 'main'");
+                  YYERROR;
+              }
+              if (current_decl_type != VOID_TYPE) {
+                  yyerror("main function must have void return type");
+                  YYERROR;
+              }
           }
           main_decl_params = NULL;  /* No parameters */
       }
@@ -230,18 +236,20 @@ named_type
 void_main_def
     : named_type IDENTIFIER '(' ')' '{'
       {
-          if (strcmp($2.lexeme, "main") != 0) {
-              yyerror("function definition must be 'main'");
-              YYERROR;
-          }
-          if (current_decl_type != VOID_TYPE) {
-              yyerror("main function must have void return type");
-              YYERROR;
-          }
-          /* Check if declaration exists and parameters match */
-          if (main_seen && main_decl_params != NULL) {
-              yyerror("function definition parameter list does not match declaration");
-              YYERROR;
+          if (!sa_parse) {
+              if (strcmp($2.lexeme, "main") != 0) {
+                  yyerror("function definition must be 'main'");
+                  YYERROR;
+              }
+              if (current_decl_type != VOID_TYPE) {
+                  yyerror("main function must have void return type");
+                  YYERROR;
+              }
+              /* Check if declaration exists and parameters match */
+              if (main_seen && main_decl_params != NULL) {
+                  yyerror("function definition parameter list does not match declaration");
+                  YYERROR;
+              }
           }
           set_scope(LOCAL_SCOPE);
       }
@@ -254,18 +262,20 @@ void_main_def
       }
     | named_type IDENTIFIER '(' formal_param_list ')' '{'
       {
-          if (strcmp($2.lexeme, "main") != 0) {
-              yyerror("function definition must be 'main'");
-              YYERROR;
-          }
-          if (current_decl_type != VOID_TYPE) {
-              yyerror("main function must have void return type");
-              YYERROR;
-          }
-          /* Check if declaration exists and parameters match */
-          if (main_seen && !compare_param_lists(main_decl_params, $4)) {
-              yyerror("function definition parameter list does not match declaration");
-              YYERROR;
+          if (!sa_parse) {
+              if (strcmp($2.lexeme, "main") != 0) {
+                  yyerror("function definition must be 'main'");
+                  YYERROR;
+              }
+              if (current_decl_type != VOID_TYPE) {
+                  yyerror("main function must have void return type");
+                  YYERROR;
+              }
+              /* Check if declaration exists and parameters match */
+              if (main_seen && !compare_param_lists(main_decl_params, $4)) {
+                  yyerror("function definition parameter list does not match declaration");
+                  YYERROR;
+              }
           }
           set_scope(LOCAL_SCOPE);
       }
@@ -321,7 +331,7 @@ variable_as_operand
     : variable_name
       {
           Symbol_Table_Entry *entry = lookup_symbol($1.lexeme);
-          if (!entry) {
+          if (!sa_parse && !entry) {
               char buf[256];
               snprintf(buf, sizeof(buf), "Variable '%s' not declared", $1.lexeme);
               yyerror(buf);
@@ -436,7 +446,7 @@ read_statement
     : READ variable_name ';'
       {
           Symbol_Table_Entry *entry = lookup_symbol($2.lexeme);
-          if (!entry) {
+          if (!sa_parse && !entry) {
               char buf[256];
               snprintf(buf, sizeof(buf), "Variable '%s' not declared", $2.lexeme);
               yyerror(buf);

@@ -7,11 +7,16 @@
 #include "symbol_table.h"
 
 int yyparse(void);
+int yylex(void);
 extern FILE *yyin;
 extern Ast *root;
+extern int yylineno;
 
 int dump_tokens = 0;
 FILE *tokfile = NULL;
+FILE *astfile = NULL;
+int sa_scan = 0;
+int sa_parse = 0;
 
 void dump_token(const char *type, const char *lexeme, int line)
 {
@@ -24,25 +29,62 @@ void dump_token(const char *type, const char *lexeme, int line)
 int main(int argc, char **argv)
 {
     const char *input_file = NULL;
+    int show_ast = 0;
 
-    if (argc == 2)
+    if (argc < 2)
     {
-        input_file = argv[1];
-    }
-    else if (argc == 3)
-    {
-        if (strcmp(argv[1], "--show-tokens") != 0)
-        {
-            fprintf(stderr, "Unknown option: %s\n", argv[1]);
-            return 1;
-        }
-        dump_tokens = 1;
-        input_file = argv[2];
-    }
-    else
-    {
-        fprintf(stderr, "Usage: %s [--show-tokens] <source-file>\n", argv[0]);
+        fprintf(stderr, "Usage: %s [--show-tokens] [--show-ast] [--sa-scan] [--sa-parse] <source-file>\n", argv[0]);
         return 1;
+    }
+
+    /* Parse all arguments to extract flags and input file */
+    for (int i = 1; i < argc; i++)
+    {
+        if (argv[i][0] == '-')
+        {
+            /* It's a flag */
+            if (strcmp(argv[i], "--show-tokens") == 0)
+            {
+                dump_tokens = 1;
+            }
+            else if (strcmp(argv[i], "--show-ast") == 0)
+            {
+                show_ast = 1;
+            }
+            else if (strcmp(argv[i], "--sa-scan") == 0)
+            {
+                sa_scan = 1;
+               // dump_tokens = 1; /* Scan mode also dumps tokens */
+            }
+            else if (strcmp(argv[i], "--sa-parse") == 0)
+            {
+                sa_parse = 1;
+            }
+            else
+            {
+                fprintf(stderr, "Unknown option: %s\n", argv[i]);
+                return 1;
+            }
+        }
+        else
+        {
+            /* It's the input file (last non-flag argument) */
+            input_file = argv[i];
+        }
+    }
+
+    if (!input_file)
+    {
+        fprintf(stderr, "Error: No input file specified\n");
+        fprintf(stderr, "Usage: %s [--show-tokens] [--show-ast] [--sa-scan] [--sa-parse] <source-file>\n", argv[0]);
+        return 1;
+    }
+
+    /* Priority: if sa-scan is set, show-ast is irrelevant (we stop at scanning) */
+    /* Priority: if sa-parse is set, show-ast only applies to parse tree */
+    if (sa_scan)
+    {
+        show_ast = 0; /* Ignore show-ast if we're only scanning */
     }
 
     yyin = fopen(input_file, "r");
@@ -75,23 +117,101 @@ int main(int argc, char **argv)
         }
     }
 
+    if (show_ast)
+    {
+        size_t path_len = strlen(input_file) + strlen(".ast") + 1;
+        char *astname = malloc(path_len);
+        if (!astname)
+        {
+            fprintf(stderr, "Out of memory\n");
+            fclose(yyin);
+            return 1;
+        }
+
+        snprintf(astname, path_len, "%s.ast", input_file);
+        astfile = fopen(astname, "w");
+        free(astname);
+
+        if (!astfile)
+        {
+            perror("astfile");
+            fclose(yyin);
+            return 1;
+        }
+    }
+
     init_symbol_table();
 
-    if (yyparse() == 0 && root)
+    /* Scan-only mode: just tokenize and stop */
+    if (sa_scan)
     {
-        if (check_ast(root))            
-            root->print(root, stdout);
-        else{            
+        int token;
+        while ((token = yylex()) != 0)
+        {
+            /* yylex() handles token dumping via dump_token() */
+        }
+    }
+    /* Parse-only mode: tokenize and parse, but stop before semantic analysis */
+    else if (sa_parse)
+    {
+        if (yyparse() == 0 && root)
+        {
+            /* Stop after parsing, optionally show AST if requested */
+            if (show_ast)
+                root->print(root, astfile);
+        }
+        else
+        {
+            destroy_symbol_table();
+            if (tokfile)
+                fclose(tokfile);
+            if (astfile)
+                fclose(astfile);
+            fclose(yyin);
+            return 1;
+        }
+    }
+    /* Normal mode: full compilation with semantic checks */
+    else
+    {
+        if (yyparse() == 0 && root)
+        {
+            /* Perform semantic checks */
+            if (check_ast(root))
+            {
+                if (show_ast)
+                    root->print(root, astfile);
+            }
+            else
+            {
+                destroy_symbol_table();
+                if (tokfile)
+                    fclose(tokfile);
+                if (astfile)
+                    fclose(astfile);
+                fclose(yyin);
+                return 1;
+            }
+        }
+        else
+        {
+            destroy_symbol_table();
+            if (tokfile)
+                fclose(tokfile);
+            if (astfile)
+                fclose(astfile);
+            fclose(yyin);
             return 1;
         }
     }
 
     if (tokfile)
         fclose(tokfile);
-    
-    
+    if (astfile)
+        fclose(astfile);
+
     destroy_symbol_table();
     fclose(yyin);
-    
+
     return 0;
 }
