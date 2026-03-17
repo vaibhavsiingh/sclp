@@ -19,27 +19,58 @@ extern void dump_token(const char *type, const char *lexeme, int line);
 
 /* Parser globals */
 int main_seen = 0;
-Ast_List *main_decl_params = NULL;
+
+typedef struct Param_Type_List {
+    Data_Type type;
+    struct Param_Type_List *next;
+} Param_Type_List;
+
+Param_Type_List *main_decl_params = NULL;
 
 /* Helper function to compare parameter lists */
-int compare_param_lists(Ast_List *decl_params, Ast_List *def_params) {
-    Ast_List *d = decl_params;
+int compare_param_lists(Param_Type_List *decl_params, Ast_List *def_params) {
+    Param_Type_List *d = decl_params;
     Ast_List *f = def_params;
-    
+
     while (d != NULL && f != NULL) {
-        Name_Ast *decl_param = (Name_Ast *)d->stmt;
         Name_Ast *def_param = (Name_Ast *)f->stmt;
-        
-        if (decl_param->entry->type != def_param->entry->type) {
-            return 0;  /* Types don't match */
+
+        if (d->type != def_param->entry->type) {
+            return 0;
         }
-        
+
         d = d->next;
         f = f->next;
     }
-    
-    /* Both should be NULL (same length) */
+
     return (d == NULL && f == NULL);
+}
+
+
+Param_Type_List *extract_param_types(Ast_List *params) {
+    Param_Type_List *head = NULL;
+    Param_Type_List *tail = NULL;
+
+    while (params) {
+        Name_Ast *param = (Name_Ast *)params->stmt;
+
+        Param_Type_List *node = malloc(sizeof(Param_Type_List));
+        node->type = param->entry->type;
+        node->next = NULL;
+
+        if (!head) {
+            head = node;
+            tail = node;
+        }
+        else {
+            tail->next = node;
+            tail = node;
+        }
+
+        params = params->next;
+    }
+
+    return head;
 }
 
 Ast *root;
@@ -140,7 +171,7 @@ main_decl
                   YYERROR;
               }
           }
-          main_decl_params = $4;
+          main_decl_params = extract_param_types($4);                    
       }
 	| named_type IDENTIFIER '(' ')' ';'
       {
@@ -179,7 +210,7 @@ formal_param_list
       }
 	| formal_param
       {
-          Ast_List *new_node = malloc(sizeof(Ast_List));
+          Ast_List *new_node = malloc(sizeof(Ast_List));                    
           new_node->stmt = $1;
           new_node->next = NULL;
           $$ = new_node;
@@ -189,7 +220,7 @@ formal_param_list
 formal_param
     : param_type IDENTIFIER
       {   set_scope(LOCAL_SCOPE);
-          Symbol_Table_Entry *entry = insert_symbol($2.lexeme, $1);
+          Symbol_Table_Entry *entry = insert_symbol($2.lexeme, $1);                    
           $$ = make_name_ast(entry, $2.line);
           set_scope(GLOBAL_SCOPE);
       }
@@ -272,6 +303,7 @@ void_main_def
                   YYERROR;
               }
               /* Check if declaration exists and parameters match */
+              
               if (main_seen && !compare_param_lists(main_decl_params, $4)) {
                   yyerror("function definition parameter list does not match declaration");
                   YYERROR;

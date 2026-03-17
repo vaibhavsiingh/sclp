@@ -7,6 +7,7 @@
 #include "symbol_table.h"
 
 static int nextTempNumber = 0;
+static int nextSTempNumber = 0;
 static int nextLabelNumber = 0;
 static FILE *tac_out = NULL;
 
@@ -121,6 +122,13 @@ static char *gen_temp(void)
 {
     char buf[32];
     snprintf(buf, sizeof(buf), "temp%d", nextTempNumber++);
+    return xstrdup(buf);
+}
+
+static char *gen_stemp(void)
+{
+    char buf[32];
+    snprintf(buf, sizeof(buf), "stemp%d", nextSTempNumber++);
     return xstrdup(buf);
 }
 
@@ -387,13 +395,13 @@ static char *gen_expr(Ast *node)
     case AST_IF:
     {
         If_Ast *i = (If_Ast *)node;
+        char *l1 = gen_label();
+        char *l2 = gen_label();
+        char *t2 = gen_stemp();
         char *cond_place = gen_expr(i->cond);
         char *then_place = gen_expr(i->then_part);
         char *else_place = gen_expr(i->else_part);
         char *t1 = gen_temp();
-        char *t2 = gen_temp();
-        char *l1 = gen_label();
-        char *l2 = gen_label();
         char *code = NULL;
 
         append_text(&code, i->cond->tac_code);
