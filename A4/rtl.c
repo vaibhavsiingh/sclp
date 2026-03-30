@@ -222,10 +222,13 @@ typedef struct TempRegMap
 typedef struct
 {
     TempRegMap *head;
-    int next_reg_index;
     char procedure_name[128];
     int has_procedure_name;
 } RtlState;
+
+static const char *k_int_temp_regs[] = {
+    "t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9",
+    "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7"};
 
 static int is_temp_name(const char *s)
 {
@@ -271,7 +274,10 @@ static const char *lookup_temp_reg(RtlState *state, const char *name)
 static const char *assign_temp_reg(RtlState *state, const char *name)
 {
     TempRegMap *node;
-    char reg_name[8];
+    TempRegMap *cur;
+    size_t i;
+    int in_use;
+    const char *reg_name = "t0";
 
     if (!state || !name)
         return "t0";
@@ -279,15 +285,30 @@ static const char *assign_temp_reg(RtlState *state, const char *name)
     if (lookup_temp_reg(state, name))
         return lookup_temp_reg(state, name);
 
+    for (i = 0; i < (sizeof(k_int_temp_regs) / sizeof(k_int_temp_regs[0])); i++)
+    {
+        reg_name = k_int_temp_regs[i];
+        in_use = 0;
+        cur = state->head;
+        while (cur)
+        {
+            if (strcmp(cur->reg, reg_name) == 0)
+            {
+                in_use = 1;
+                break;
+            }
+            cur = cur->next;
+        }
+        if (!in_use)
+            break;
+    }
+
     node = (TempRegMap *)malloc(sizeof(TempRegMap));
     if (!node)
     {
         fprintf(stderr, "Out of memory in RTL generator\n");
         exit(1);
     }
-
-    snprintf(reg_name, sizeof(reg_name), "t%d", state->next_reg_index % 10);
-    state->next_reg_index++;
 
     snprintf(node->name, sizeof(node->name), "%s", name);
     snprintf(node->reg, sizeof(node->reg), "%s", reg_name);
@@ -297,7 +318,58 @@ static const char *assign_temp_reg(RtlState *state, const char *name)
     return node->reg;
 }
 
-static const char *map_temp_to_reg(RtlState *state, const char *name, const char *reg)
+static void clear_all_temp_regs(RtlState *state)
+{
+    TempRegMap *cur;
+
+    if (!state)
+        return;
+
+    cur = state->head;
+    while (cur)
+    {
+        TempRegMap *next = cur->next;
+        free(cur);
+        cur = next;
+    }
+
+    state->head = NULL;
+}
+
+static void remove_temp_reg(RtlState *state, const char *name)
+{
+    TempRegMap *cur;
+    TempRegMap *prev = NULL;
+
+    if (!state || !name)
+        return;
+
+    cur = state->head;
+    while (cur)
+    {
+        if (strcmp(cur->name, name) == 0)
+        {
+            if (prev)
+                prev->next = cur->next;
+            else
+                state->head = cur->next;
+            free(cur);
+            return;
+        }
+        prev = cur;
+        cur = cur->next;
+    }
+}
+
+static void release_temp_if_used(RtlState *state, const char *name)
+{
+    if (!state || !is_temp_name(name))
+        return;
+
+    remove_temp_reg(state, name);
+}
+
+static const char *upsert_temp_reg(RtlState *state, const char *name, const char *reg)
 {
     TempRegMap *cur;
     TempRegMap *node;
@@ -333,21 +405,7 @@ static const char *map_temp_to_reg(RtlState *state, const char *name, const char
 
 static void free_temp_reg_map(RtlState *state)
 {
-    TempRegMap *cur;
-
-    if (!state)
-        return;
-
-    cur = state->head;
-    while (cur)
-    {
-        TempRegMap *next = cur->next;
-        free(cur);
-        cur = next;
-    }
-
-    state->head = NULL;
-    state->next_reg_index = 0;
+    clear_all_temp_regs(state);
 }
 
 static const char *emit_operand_as_reg(const char *preferred_reg, const char *operand, RtlState *state, char **out)
@@ -365,11 +423,15 @@ static const char *emit_operand_as_reg(const char *preferred_reg, const char *op
     return preferred_reg;
 }
 
-static const char *pick_scratch_reg(const char *avoid_reg)
+static const char *pick_second_operand_reg(const char *first_reg, const char *result_reg)
 {
-    if (!avoid_reg || strcmp(avoid_reg, "t1") != 0)
+    if (strcmp("t0", first_reg) != 0 && strcmp("t0", result_reg) != 0)
+        return "t0";
+    if (strcmp("t1", first_reg) != 0 && strcmp("t1", result_reg) != 0)
         return "t1";
-    return "t2";
+    if (strcmp("t2", first_reg) != 0 && strcmp("t2", result_reg) != 0)
+        return "t2";
+    return "t3";
 }
 
 static const char *pick_result_reg(const char *lhs_reg, const char *rhs_reg)
@@ -452,10 +514,14 @@ static void emit_copy_assign(const char *dst, const char *rhs, RtlState *state, 
 
         if (strcmp(dst_reg, rhs_reg) != 0)
             append_linef(out, "    move:   %s <- %s", dst_reg, rhs_reg);
+        if (strcmp(dst, rhs) != 0)
+            release_temp_if_used(state, rhs);
         return;
     }
 
     emit_store_symbol(dst, rhs_reg, out);
+    release_temp_if_used(state, rhs);
+    clear_all_temp_regs(state);
 }
 
 static void emit_unary_assign(const char *dst, const char *op, const char *rhs, RtlState *state, char **out)
@@ -466,13 +532,13 @@ static void emit_unary_assign(const char *dst, const char *op, const char *rhs, 
     if (is_temp_name(dst))
     {
         if (strcmp(op, "!") == 0)
-            dst_reg = map_temp_to_reg(state, dst, "v0");
+            dst_reg = upsert_temp_reg(state, dst, "v0");
         else
             dst_reg = assign_temp_reg(state, dst);
     }
     else
     {
-        dst_reg = "t0";
+        dst_reg = pick_result_reg(src_reg, src_reg);
     }
 
     if (strcmp(op, "-") == 0)
@@ -480,8 +546,14 @@ static void emit_unary_assign(const char *dst, const char *op, const char *rhs, 
     else
         append_linef(out, "    not:    %s <- %s", dst_reg, src_reg);
 
+    if (strcmp(dst, rhs) != 0)
+        release_temp_if_used(state, rhs);
+
     if (!is_temp_name(dst))
+    {
         emit_store_symbol(dst, dst_reg, out);
+        clear_all_temp_regs(state);
+    }
 }
 
 static void emit_binary_assign(const char *dst, const char *lhs, const char *op, const char *rhs, RtlState *state, char **out)
@@ -502,22 +574,28 @@ static void emit_binary_assign(const char *dst, const char *lhs, const char *op,
     }
 
     lhs_reg = emit_operand_as_reg("v0", lhs, state, out);
-    rhs_scratch = pick_scratch_reg(lhs_reg);
-    rhs_reg = emit_operand_as_reg(rhs_scratch, rhs, state, out);
     if (is_temp_name(dst))
     {
         dst_reg = assign_temp_reg(state, dst);
-        if (strcmp(dst_reg, lhs_reg) == 0 || strcmp(dst_reg, rhs_reg) == 0)
-            dst_reg = map_temp_to_reg(state, dst, pick_result_reg(lhs_reg, rhs_reg));
     }
     else
     {
-        dst_reg = "t0";
+        dst_reg = pick_result_reg(lhs_reg, lhs_reg);
     }
 
+    rhs_scratch = pick_second_operand_reg(lhs_reg, dst_reg);
+    rhs_reg = emit_operand_as_reg(rhs_scratch, rhs, state, out);
+
     append_linef(out, "    %s:    %s <- %s, %s", rtl_op, dst_reg, lhs_reg, rhs_reg);
+    if (strcmp(dst, lhs) != 0)
+        release_temp_if_used(state, lhs);
+    if (strcmp(dst, rhs) != 0)
+        release_temp_if_used(state, rhs);
     if (!is_temp_name(dst))
+    {
         emit_store_symbol(dst, dst_reg, out);
+        clear_all_temp_regs(state);
+    }
 }
 
 static void parse_assign_line(const char *buf, RtlState *state, char **out)
@@ -550,11 +628,105 @@ static void parse_assign_line(const char *buf, RtlState *state, char **out)
     emit_copy_assign(dst, rhs, state, out);
 }
 
+static int parse_if_goto(const char *buf, char *cond, size_t cond_size, char *label, size_t label_size)
+{
+    const char *p = buf;
+    const char *start;
+    size_t len;
+
+    if (!buf || !cond || !label || cond_size == 0 || label_size == 0)
+        return 0;
+
+    if (strncmp(p, "if", 2) != 0)
+        return 0;
+
+    p += 2;
+    if (*p != '\0' && !isspace((unsigned char)*p) && *p != '(')
+        return 0;
+
+    while (*p && isspace((unsigned char)*p))
+        p++;
+
+    if (*p == '(')
+    {
+        p++;
+        start = p;
+        while (*p && *p != ')')
+            p++;
+        if (*p != ')')
+            return 0;
+
+        len = (size_t)(p - start);
+        if (len == 0 || len >= cond_size)
+            return 0;
+
+        memcpy(cond, start, len);
+        cond[len] = '\0';
+        p++;
+    }
+    else
+    {
+        start = p;
+        while (*p && !isspace((unsigned char)*p))
+            p++;
+
+        len = (size_t)(p - start);
+        if (len == 0 || len >= cond_size)
+            return 0;
+
+        memcpy(cond, start, len);
+        cond[len] = '\0';
+    }
+
+    while (*p && isspace((unsigned char)*p))
+        p++;
+
+    if (strncmp(p, "goto", 4) != 0)
+        return 0;
+    p += 4;
+
+    if (*p != '\0' && !isspace((unsigned char)*p))
+        return 0;
+
+    while (*p && isspace((unsigned char)*p))
+        p++;
+
+    start = p;
+    while (*p && !isspace((unsigned char)*p) && *p != ';')
+        p++;
+
+    len = (size_t)(p - start);
+    if (len == 0 || len >= label_size)
+        return 0;
+
+    memcpy(label, start, len);
+    label[len] = '\0';
+
+    return 1;
+}
+
+static int parse_procedure_header(const char *buf, char *proc_name, size_t proc_name_size)
+{
+    if (!buf || !proc_name || proc_name_size == 0)
+        return 0;
+
+    if (sscanf(buf, "proc %127s begin", proc_name) == 1)
+        return 1;
+
+    if (sscanf(buf, "**PROCEDURE: %127s", proc_name) == 1)
+        return 1;
+
+    if (sscanf(buf, "*PROCEDURE: %127s", proc_name) == 1)
+        return 1;
+
+    return 0;
+}
+
 static void parse_tac_line(const char *line, RtlState *state, char **out)
 {
     char buf[512];
     char cond[128], label[128], dst[128];
-    char proc_name[128], proc_kw[128];
+    char proc_name[128];
     const char *cond_reg = NULL;
 
     if (!line)
@@ -566,13 +738,16 @@ static void parse_tac_line(const char *line, RtlState *state, char **out)
     if (!*buf)
         return;
 
-    if (sscanf(buf, "proc %127s %127s", proc_name, proc_kw) == 2)
+    if (parse_procedure_header(buf, proc_name, sizeof(proc_name)))
     {
-        if (strcmp(proc_kw, "begin") == 0)
-        {
-            snprintf(state->procedure_name, sizeof(state->procedure_name), "%s", proc_name);
-            state->has_procedure_name = 1;
-        }
+        snprintf(state->procedure_name, sizeof(state->procedure_name), "%s", proc_name);
+        state->has_procedure_name = 1;
+        return;
+    }
+
+    if (strncmp(buf, "**BEGIN", 7) == 0 || strncmp(buf, "**END", 5) == 0 ||
+        strncmp(buf, "*BEGIN", 6) == 0 || strncmp(buf, "*END", 4) == 0)
+    {
         return;
     }
 
@@ -594,10 +769,11 @@ static void parse_tac_line(const char *line, RtlState *state, char **out)
         return;
     }
 
-    if (sscanf(buf, "if %127s goto %127s", cond, label) == 2)
+    if (parse_if_goto(buf, cond, sizeof(cond), label, sizeof(label)))
     {
         cond_reg = emit_operand_as_reg("v0", cond, state, out);
         append_linef(out, "    bgtz:   %s, %s", cond_reg, label);
+        release_temp_if_used(state, cond);
         return;
     }
 
@@ -612,6 +788,7 @@ static void parse_tac_line(const char *line, RtlState *state, char **out)
     if (strncmp(buf, "print ", 6) == 0)
     {
         emit_print(buf + 6, state, out);
+        release_temp_if_used(state, buf + 6);
         return;
     }
 
@@ -623,7 +800,11 @@ static char *tac_to_rtl(Ast *root, char *procedure_name, size_t procedure_name_s
     FILE *fp;
     char line[512];
     char *rtl = NULL;
-    RtlState state = {NULL, 0, "", 0};
+    RtlState state = {NULL, "", 0};
+    char **lines = NULL;
+    size_t line_count = 0;
+    size_t line_cap = 0;
+    size_t i;
 
     fp = tmpfile();
     if (!fp)
@@ -633,7 +814,25 @@ static char *tac_to_rtl(Ast *root, char *procedure_name, size_t procedure_name_s
     rewind(fp);
 
     while (fgets(line, sizeof(line), fp))
-        parse_tac_line(line, &state, &rtl);
+    {
+        if (line_count == line_cap)
+        {
+            size_t new_cap = (line_cap == 0) ? 64 : line_cap * 2;
+            char **tmp = (char **)realloc(lines, new_cap * sizeof(char *));
+            if (!tmp)
+            {
+                fprintf(stderr, "Out of memory in RTL generator\n");
+                exit(1);
+            }
+            lines = tmp;
+            line_cap = new_cap;
+        }
+
+        lines[line_count++] = xstrdup(line);
+    }
+
+    for (i = 0; i < line_count; i++)
+        parse_tac_line(lines[i], &state, &rtl);
 
     fclose(fp);
 
@@ -646,6 +845,10 @@ static char *tac_to_rtl(Ast *root, char *procedure_name, size_t procedure_name_s
     }
 
     free_temp_reg_map(&state);
+
+    for (i = 0; i < line_count; i++)
+        free(lines[i]);
+    free(lines);
 
     if (!rtl)
         rtl = xstrdup("");

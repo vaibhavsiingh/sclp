@@ -1,5 +1,5 @@
 CC := gcc
-CFLAGS := -Wall -Wextra -g # -fsanitize=address -fno-omit-frame-pointer
+CFLAGS := -Wall -Wextra -g #-fsanitize=address -fno-omit-frame-pointer
 LEX := lex
 YACC := yacc
 

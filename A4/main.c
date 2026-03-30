@@ -22,6 +22,56 @@ FILE *rtlfile = NULL;
 int sa_scan = 0;
 int sa_parse = 0;
 int sa_ast = 0;
+int sa_tac = 0;
+int sa_rtl = 0;
+
+typedef enum
+{
+    STAGE_SCAN,
+    STAGE_PARSE,
+    STAGE_AST,
+    STAGE_TAC,
+    STAGE_RTL
+} Compile_Stage;
+
+static void close_outputs(void)
+{
+    if (tokfile)
+        fclose(tokfile);
+    if (astfile)
+        fclose(astfile);
+    if (tacfile)
+        fclose(tacfile);
+    if (rtlfile)
+        fclose(rtlfile);
+
+    tokfile = NULL;
+    astfile = NULL;
+    tacfile = NULL;
+    rtlfile = NULL;
+}
+
+static FILE *open_output_with_suffix(const char *input_file, const char *suffix, const char *label)
+{
+    size_t path_len = strlen(input_file) + strlen(suffix) + 1;
+    char *name = malloc(path_len);
+    FILE *fp;
+
+    if (!name)
+    {
+        fprintf(stderr, "Out of memory\n");
+        return NULL;
+    }
+
+    snprintf(name, path_len, "%s%s", input_file, suffix);
+    fp = fopen(name, "w");
+    free(name);
+
+    if (!fp)
+        perror(label);
+
+    return fp;
+}
 
 void dump_token(const char *type, const char *lexeme, int line)
 {
@@ -37,10 +87,13 @@ int main(int argc, char **argv)
     int show_ast = 0;
     int show_tac = 0;
     int show_rtl = 0;
+    Compile_Stage stop_stage = STAGE_RTL;
+    int parse_ok = 0;
+    int semantic_ok = 1;
 
     if (argc < 2)
     {
-        fprintf(stderr, "Usage: %s [--show-tokens] [--show-ast] [--show-tac] [--show-rtl] [--sa-scan] [--sa-parse] <source-file>\n", argv[0]);
+        fprintf(stderr, "Usage: %s [--show-tokens] [--show-ast] [--show-tac] [--show-rtl] [--sa-scan] [--sa-parse] [--sa-ast] [--sa-tac] [--sa-rtl] <source-file>\n", argv[0]);
         return 1;
     }
 
@@ -75,6 +128,18 @@ int main(int argc, char **argv)
             {
                 sa_parse = 1;
             }
+            else if (strcmp(argv[i], "--sa-ast") == 0)
+            {
+                sa_ast = 1;
+            }
+            else if (strcmp(argv[i], "--sa-tac") == 0)
+            {
+                sa_tac = 1;
+            }
+            else if (strcmp(argv[i], "--sa-rtl") == 0)
+            {
+                sa_rtl = 1;
+            }
             else
             {
                 fprintf(stderr, "Unknown option: %s\n", argv[i]);
@@ -91,23 +156,20 @@ int main(int argc, char **argv)
     if (!input_file)
     {
         fprintf(stderr, "Error: No input file specified\n");
-        fprintf(stderr, "Usage: %s [--show-tokens] [--show-ast] [--show-tac] [--show-rtl] [--sa-scan] [--sa-parse] <source-file>\n", argv[0]);
+        fprintf(stderr, "Usage: %s [--show-tokens] [--show-ast] [--show-tac] [--show-rtl] [--sa-scan] [--sa-parse] [--sa-ast] [--sa-tac] [--sa-rtl] <source-file>\n", argv[0]);
         return 1;
     }
 
-    /* Priority: if sa-scan is set, show-ast/show-tac are irrelevant (we stop at scanning) */
-    /* Priority: if sa-parse is set, show-tac is irrelevant (no semantic analysis) */
     if (sa_scan)
-    {
-        show_ast = 0; /* Ignore show-ast if we're only scanning */
-        show_tac = 0;
-        show_rtl = 0;
-    }
+        stop_stage = STAGE_SCAN;
     else if (sa_parse)
-    {
-        show_tac = 0; /* TAC requires full semantic analysis */
-        show_rtl = 0; /* RTL requires full semantic analysis */
-    }
+        stop_stage = STAGE_PARSE;
+    else if (sa_ast)
+        stop_stage = STAGE_AST;
+    else if (sa_tac)
+        stop_stage = STAGE_TAC;
+    else if (sa_rtl)
+        stop_stage = STAGE_RTL;
 
     yyin = fopen(input_file, "r");
     if (!yyin)
@@ -118,45 +180,10 @@ int main(int argc, char **argv)
 
     if (dump_tokens)
     {
-        size_t path_len = strlen(input_file) + strlen(".toks") + 1;
-        char *tokname = malloc(path_len);
-        if (!tokname)
-        {
-            fprintf(stderr, "Out of memory\n");
-            fclose(yyin);
-            return 1;
-        }
-
-        snprintf(tokname, path_len, "%s.toks", input_file);
-        tokfile = fopen(tokname, "w");
-        free(tokname);
+        tokfile = open_output_with_suffix(input_file, ".toks", "tokfile");
 
         if (!tokfile)
         {
-            perror("tokfile");
-            fclose(yyin);
-            return 1;
-        }
-    }
-
-    if (show_ast)
-    {
-        size_t path_len = strlen(input_file) + strlen(".ast") + 1;
-        char *astname = malloc(path_len);
-        if (!astname)
-        {
-            fprintf(stderr, "Out of memory\n");
-            fclose(yyin);
-            return 1;
-        }
-
-        snprintf(astname, path_len, "%s.ast", input_file);
-        astfile = fopen(astname, "w");
-        free(astname);
-
-        if (!astfile)
-        {
-            perror("astfile");
             fclose(yyin);
             return 1;
         }
@@ -164,8 +191,8 @@ int main(int argc, char **argv)
 
     init_symbol_table();
 
-    /* Scan-only mode: just tokenize and stop */
-    if (sa_scan)
+    /* Stage 1: scan */
+    if (stop_stage == STAGE_SCAN)
     {
         int token;
         while ((token = yylex()) != 0)
@@ -173,75 +200,64 @@ int main(int argc, char **argv)
             /* yylex() handles token dumping via dump_token() */
         }
     }
-    /* Parse-only mode: tokenize and parse, but stop before semantic analysis */
-    else if (sa_parse)
-    {
-        if (yyparse() == 0 && root)
-        {
-            /* Stop after parsing, optionally show AST if requested */
-            if (show_ast)
-                root->print(root, astfile);
-        }
-        else
-        {
-            destroy_symbol_table();
-            if (tokfile)
-                fclose(tokfile);
-            if (astfile)
-                fclose(astfile);
-            fclose(yyin);
-            return 1;
-        }
-    }
-    /* Normal mode: full compilation with semantic checks */
     else
     {
-        if (yyparse() == 0 && root)
+        /* Stage 2: parse */
+        parse_ok = (yyparse() == 0 && root);
+        if (!parse_ok)
+            semantic_ok = 0;
+
+        if (semantic_ok && show_ast)
         {
-            /* Perform semantic checks */
-            if (check_ast(root))
+            astfile = open_output_with_suffix(input_file, ".ast", "astfile");
+            if (!astfile)
             {
-                if (show_ast)
-                    root->print(root, astfile);
-                if (show_tac)
-                {
-                    tac_generate(root, stdout);
-                }
-                if (show_rtl)
-                {
-                    rtl_generate(root, stdout);
-                }
+                semantic_ok = 0;
             }
             else
             {
-                destroy_symbol_table();
-                if (tokfile)
-                    fclose(tokfile);
-                if (astfile)
-                    fclose(astfile);
-                fclose(yyin);
-                return 1;
+                root->print(root, astfile);
             }
         }
-        else
+
+        if (semantic_ok && stop_stage != STAGE_PARSE)
         {
-            destroy_symbol_table();
-            if (tokfile)
-                fclose(tokfile);
-            if (astfile)
-                fclose(astfile);
-            fclose(yyin);
-            return 1;
+            /* Stage 3: AST semantic checks */
+            semantic_ok = check_ast(root);
+
+            /* Stage 4: TAC */
+            if (semantic_ok && stop_stage != STAGE_AST && show_tac)
+            {
+                tacfile = open_output_with_suffix(input_file, ".tac", "tacfile");
+                if (!tacfile)
+                {
+                    semantic_ok = 0;
+                }
+                else
+                {
+                    tac_generate(root, tacfile);
+                }
+            }
+
+            /* Stage 5: RTL */
+            if (semantic_ok && stop_stage != STAGE_AST && stop_stage != STAGE_TAC && show_rtl)
+            {
+                rtlfile = open_output_with_suffix(input_file, ".rtl", "rtlfile");
+                if (!rtlfile)
+                {
+                    semantic_ok = 0;
+                }
+                else
+                {
+                    rtl_generate(root, rtlfile);
+                }
+            }
         }
     }
 
-    if (tokfile)
-        fclose(tokfile);
-    if (astfile)
-        fclose(astfile);
-
     destroy_symbol_table();
+    close_outputs();
     fclose(yyin);
 
-    return 0;
+    return semantic_ok ? 0 : 1;
 }

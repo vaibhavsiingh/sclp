@@ -408,7 +408,7 @@ static char *gen_expr(Ast *node)
 
         append_text(&code, i->cond->tac_code);
         append_linef(&code, "%s = !%s", t1, cond_place);
-        append_linef(&code, "if %s goto %s", t1, l1);
+        append_linef(&code, "if (%s) goto %s", t1, l1);
         append_text(&code, i->then_part->tac_code);
         append_linef(&code, "%s = %s", t2, then_place);
         append_linef(&code, "goto %s", l2);
@@ -458,18 +458,25 @@ static char *gen_expr(Ast *node)
 static void gen_if_else_stmt(If_Else_Stmt_Ast *node, Ast *base)
 {
     char *cond_place = gen_bool_expr(node->cond);
-    char *neg_cond = gen_temp();
-    char *else_label = gen_label();
-    char *end_label = gen_label();
+
     char *code = NULL;
 
     gen_stmt(node->then_part);
+    
+    
+    char *neg_cond = gen_temp();
+
+    char *end_label = gen_label();
+    char *else_label = gen_label();
+
+
     if (node->else_part)
         gen_stmt(node->else_part);
 
+
     append_text(&code, node->cond->tac_code);
     append_linef(&code, "%s = !%s", neg_cond, cond_place);
-    append_linef(&code, "if %s goto %s", neg_cond, else_label);
+    append_linef(&code, "if (%s) goto %s", neg_cond, else_label);
     append_text(&code, node->then_part ? node->then_part->tac_code : "");
     append_linef(&code, "goto %s", end_label);
     append_linef(&code, "%s:", else_label);
@@ -486,34 +493,50 @@ static void gen_if_else_stmt(If_Else_Stmt_Ast *node, Ast *base)
 
 static void gen_while_stmt(While_Ast *node, Ast *base)
 {
-    char *start_label = gen_label();
-    char *end_label = gen_label();
+    
+    
     char *cond_place = NULL;
     char *neg_cond = NULL;
     char *code = NULL;
 
-    cond_place = gen_bool_expr(node->cond);
-    gen_stmt(node->body);
-
+    
+    
     if (node->is_do_form)
     {
+        gen_stmt(node->body);
+        cond_place = gen_bool_expr(node->cond);        
+        char *start_label = gen_label();
+
+    
         append_linef(&code, "%s:", start_label);
         append_text(&code, node->body ? node->body->tac_code : "");
 
         append_text(&code, node->cond->tac_code);
-        append_linef(&code, "if %s goto %s", cond_place, start_label);
+        append_linef(&code, "if (%s) goto %s", cond_place, start_label);
+
+        free(start_label);
     }
     else
     {
-        append_linef(&code, "%s:", start_label);
+        /* c1 || c2 || c3 || c4 for while: l1:, E.code, t1=!E.place/if t1 goto l2, S.code/goto l1, l2: */
+        cond_place = gen_bool_expr(node->cond);
+        gen_stmt(node->body);
+        char *start_label = gen_label();
+        char *end_label = gen_label();
 
+        
         neg_cond = gen_temp();
+
+        append_linef(&code, "%s:", start_label);
         append_text(&code, node->cond->tac_code);
         append_linef(&code, "%s = !%s", neg_cond, cond_place);
-        append_linef(&code, "if %s goto %s", neg_cond, end_label);
+        append_linef(&code, "if (%s) goto %s", neg_cond, end_label);
         append_text(&code, node->body ? node->body->tac_code : "");
         append_linef(&code, "goto %s", start_label);
         append_linef(&code, "%s:", end_label);
+
+        free(start_label);
+        free(end_label);
     }
 
     set_node_code(base, code);
@@ -522,8 +545,7 @@ static void gen_while_stmt(While_Ast *node, Ast *base)
         free(cond_place);
     if (neg_cond)
         free(neg_cond);
-    free(start_label);
-    free(end_label);
+    
 }
 
 static void gen_stmt(Ast *node)
