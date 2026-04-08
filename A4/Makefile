@@ -5,7 +5,7 @@ YACC := yacc
 
 TARGET := compiler
 
-SRCS := ast.c ast_print.c symbol_table.c tac.c rtl.c main.c y.tab.c lex.yy.c
+SRCS := ast.c ast_print.c symbol_table.c tac.c  main.c y.tab.c lex.yy.c rtl.c
 OBJS := $(SRCS:.c=.o)
 
 all: $(TARGET)

@@ -1051,10 +1051,12 @@ static void emit_tac_seq(const Tac_Seq *seq, RtlState *state, Rtl_Seq *out)
             const Tac_Proc *ins = (const Tac_Proc *)cur;
             snprintf(state->procedure_name, sizeof(state->procedure_name), "%s", ins->name ? ins->name : "");
             state->has_procedure_name = 1;
+            tac_set_current_proc(ins->name ? ins->name : "<anon>");
             clear_all_temp_regs(state);
             break;
         }
         case TAC_PROC_END:
+            tac_set_current_proc(NULL);
             clear_all_temp_regs(state);
             break;
         case TAC_LABEL:

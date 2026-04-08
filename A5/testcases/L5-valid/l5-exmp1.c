@@ -1,17 +1,20 @@
 
-int f()
+int global;
+int t();
+
+void f()
 {
-   int a;
-  return a;
+  //  int a;
+  // return a;
 }
-int g()
+void g()
 {
-	return 0;
+	int b;
 }
-void main()
+bool main()
 {
  
  f();
  g();
-
+  return 2 > 1;
 }

@@ -2,7 +2,7 @@ int a,b,c;
 void main()
 {
   int d,e,f;
-
+	print "Hello";
 	if(a>20)
 		b=20;
 	else 

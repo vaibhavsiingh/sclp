@@ -1,0 +1,31 @@
+**PROCEDURE: main
+**BEGIN: RTL Statements
+
+    iLoad:  v0 <- 5        ;; syscall: read integer
+    read
+    store:  a <- v0
+    iLoad:  v0 <- 5        ;; syscall: read integer
+    read
+    store:  b <- v0
+    load:   v0 <- a
+    load:   t1 <- b
+    sgt:    t0 <- v0, t1
+    not:    v0 <- t0
+    bgtz:   v0, Label1
+    load:   v0 <- a
+    load:   t1 <- b
+    add:    t0 <- v0, t1
+    store:  n <- t0
+    goto:   Label0
+Label1:
+    load:   v0 <- a
+    load:   t1 <- b
+    sub:    t0 <- v0, t1
+    store:  n <- t0
+Label0:
+    iLoad:  v0 <- 1        ;; syscall: print integer
+    load:   a0 <- n
+    write
+
+
+**END: RTL Statements

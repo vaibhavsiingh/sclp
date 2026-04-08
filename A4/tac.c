@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdarg.h>
+#include <ctype.h>
 
 #include "tac.h"
 #include "symbol_table.h"
@@ -11,111 +11,116 @@ static int nextSTempNumber = 0;
 static int nextLabelNumber = 0;
 static FILE *tac_out = NULL;
 
+typedef struct TempDt
+{
+    char *name;
+    Data_Type type;
+    struct TempDt *next;
+} TempDt;
+
+static TempDt *temp_map_head = NULL;
+static TempDt *temp_map_tail = NULL;
+
+static void *checked_malloc(size_t size)
+{
+    void *ptr = malloc(size);
+    if (!ptr)
+    {
+        fprintf(stderr, "Out of memory in TAC generator\n");
+        exit(1);
+    }
+    return ptr;
+}
+
 static char *xstrdup(const char *s)
 {
     size_t n;
     char *p;
 
     if (!s)
+    {
+        printf("ERROR: input of xstrdup DNE\n");
         s = "";
+    }
 
     n = strlen(s) + 1;
-    p = (char *)malloc(n);
-    if (!p)
-    {
-        fprintf(stderr, "Out of memory in TAC generator\n");
-        exit(1);
-    }
+    p = (char *)checked_malloc(n);
     memcpy(p, s, n);
+    p[n] = '\0';
     return p;
 }
 
-static char *vformat_string(const char *fmt, va_list args)
+static int is_float_literal(const char *s)
 {
-    va_list copy;
-    int len;
-    char *buffer;
+    size_t i = 0;
+    int seen_digit = 0;
+    int seen_dot = 0;
 
-    va_copy(copy, args);
-    len = vsnprintf(NULL, 0, fmt, copy);
-    va_end(copy);
+    if (!s || !*s)
+        return 0;
 
-    if (len < 0)
+    if (s[i] == '+' || s[i] == '-')
+        i++;
+
+    for (; s[i] != '\0'; i++)
     {
-        fprintf(stderr, "Formatting error in TAC generator\n");
-        exit(1);
+        if (isdigit((unsigned char)s[i]))
+        {
+            seen_digit = 1;
+            continue;
+        }
+
+        if (s[i] == '.')
+        {
+            if (seen_dot)
+                return 0;
+            seen_dot = 1;
+            continue;
+        }
+
+        return 0;
     }
 
-    buffer = (char *)malloc((size_t)len + 1);
-    if (!buffer)
+    return seen_digit && seen_dot;
+}
+
+static void register_temp_type(char *name, Data_Type type)
+{
+    TempDt *node = (TempDt *)checked_malloc(sizeof(TempDt));
+    if (!temp_map_tail)
     {
-        fprintf(stderr, "Out of memory in TAC generator\n");
-        exit(1);
+        temp_map_head = node;
+        temp_map_tail = node;
+    }
+    else
+    {
+        temp_map_tail->next = node;
+        temp_map_tail = node;
     }
 
-    vsnprintf(buffer, (size_t)len + 1, fmt, args);
-    return buffer;
+    // printf("type of %s = %d\n", name, (int)type);
+
+    node->name = xstrdup(name);
+    node->type = type;
+    node->next = NULL;
 }
 
-// i dont understand
-static char *format_string(const char *fmt, ...)
+Data_Type get_operand_type(char *name)
 {
-    va_list args;
-    char *buffer;
+    TempDt *cur = temp_map_head;
 
-    va_start(args, fmt);
-    buffer = vformat_string(fmt, args);
-    va_end(args);
-    return buffer;
-}
-
-static void append_text(char **dest, const char *text)
-{
-    size_t old_len;
-    size_t add_len;
-    char *buffer;
-
-    if (!text || !*text)
-        return;
-
-    if (!*dest)
+    while (cur)
     {
-        *dest = xstrdup(text);
-        return;
+        if (strcmp(cur->name, name) == 0)
+            return cur->type;
+        cur = cur->next;
     }
+    Symbol_Table_Entry *entry = lookup_symbol(name);
+    if (entry)
+        return entry->type;
 
-    old_len = strlen(*dest);
-    add_len = strlen(text);
-    buffer = (char *)realloc(*dest, old_len + add_len + 1);
-    if (!buffer)
-    {
-        fprintf(stderr, "Out of memory in TAC generator\n");
-        exit(1);
-    }
-
-    memcpy(buffer + old_len, text, add_len + 1);
-    *dest = buffer;
-}
-
-// i dont understand
-static void append_linef(char **dest, const char *fmt, ...)
-{
-    va_list args;
-    char *line;
-
-    va_start(args, fmt);
-    line = vformat_string(fmt, args);
-    va_end(args);
-
-    append_text(dest, line);
-    append_text(dest, "\n");
-    free(line);
-}
-
-static void emit_code(const char *code)
-{
-    if (code && *code)
-        fputs(code, tac_out);
+    printf("ERROR: cannot infer type of %s", name);
+    return INT_TYPE;
 }
 
 static char *gen_temp(void)
@@ -160,13 +165,295 @@ static const char *relop_to_str(Relational_Op op)
     }
 }
 
-static void set_node_code(Ast *node, char *code)
+static void tac_print_assign(Tac *tac, FILE *out)
+{
+    Tac_Assign *ins = (Tac_Assign *)tac;
+    if (is_float_literal(ins->src))
+        fprintf(out, "%s = %.2f\n", ins->dest, strtod(ins->src, NULL));
+    else
+        fprintf(out, "%s = %s\n", ins->dest, ins->src);
+}
+
+static void tac_print_binary(Tac *tac, FILE *out)
+{
+    Tac_Binary *ins = (Tac_Binary *)tac;
+    fprintf(out, "%s = %s %s %s\n", ins->dest, ins->lhs, ins->op, ins->rhs);
+}
+
+static void tac_print_unary(Tac *tac, FILE *out)
+{
+    Tac_Unary *ins = (Tac_Unary *)tac;
+    fprintf(out, "%s = %s%s\n", ins->dest, ins->op, ins->operand);
+}
+
+static void tac_print_label(Tac *tac, FILE *out)
+{
+    Tac_Label *ins = (Tac_Label *)tac;
+    fprintf(out, "%s:\n", ins->label);
+}
+
+static void tac_print_goto(Tac *tac, FILE *out)
+{
+    Tac_Goto *ins = (Tac_Goto *)tac;
+    fprintf(out, "goto %s\n", ins->label);
+}
+
+static void tac_print_if_goto(Tac *tac, FILE *out)
+{
+    Tac_If_Goto *ins = (Tac_If_Goto *)tac;
+    fprintf(out, "if (%s) goto %s\n", ins->cond, ins->label);
+}
+
+static void tac_print_read(Tac *tac, FILE *out)
+{
+    Tac_Read *ins = (Tac_Read *)tac;
+    fprintf(out, "read %s\n", ins->target);
+}
+
+static void tac_print_print(Tac *tac, FILE *out)
+{
+    Tac_Print *ins = (Tac_Print *)tac;
+    if (is_float_literal(ins->value))
+        fprintf(out, "print %.2f\n", strtod(ins->value, NULL));
+    else
+        fprintf(out, "print %s\n", ins->value);
+}
+
+// static void tac_print_return(Tac *tac, FILE *out)
+// {
+//     (void)tac;
+//     fprintf(out, "return\n");
+// }
+
+static void tac_print_proc_begin(Tac *tac, FILE *out)
+{
+    Tac_Proc *ins = (Tac_Proc *)tac;
+    // TODO
+    fprintf(out, "proc %s begin\n", ins->name);
+}
+
+static void tac_print_proc_end(Tac *tac, FILE *out)
+{
+    Tac_Proc *ins = (Tac_Proc *)tac;
+    // TODO
+    fprintf(out, "proc %s end\n", ins->name);
+}
+
+static void tac_print_blank(Tac *tac, FILE *out)
+{
+    (void)tac;
+    fprintf(out, "\n");
+}
+
+static Tac *tac_alloc(size_t size, Tac_Kind kind, Tac_Print_Fn print_fn)
+{
+    Tac *instr = (Tac *)checked_malloc(size);
+    instr->kind = kind;
+    instr->print = print_fn;
+    instr->next = NULL;
+    return instr;
+}
+
+Tac *tac_make_assign(const char *dest, const char *src)
+{
+    Tac_Assign *ins = (Tac_Assign *)tac_alloc(sizeof(Tac_Assign), TAC_ASSIGN, tac_print_assign);
+    ins->dest = xstrdup(dest);
+    ins->src = xstrdup(src);
+    return (Tac *)ins;
+}
+
+Tac *tac_make_binary(const char *dest, const char *lhs, const char *op, const char *rhs)
+{
+    Tac_Binary *ins = (Tac_Binary *)tac_alloc(sizeof(Tac_Binary), TAC_BINARY, tac_print_binary);
+    ins->dest = xstrdup(dest);
+    ins->lhs = xstrdup(lhs);
+    ins->op = xstrdup(op);
+    ins->rhs = xstrdup(rhs);
+    return (Tac *)ins;
+}
+
+Tac *tac_make_unary(const char *dest, const char *op, const char *operand)
+{
+    Tac_Unary *ins = (Tac_Unary *)tac_alloc(sizeof(Tac_Unary), TAC_UNARY, tac_print_unary);
+    ins->dest = xstrdup(dest);
+    ins->op = xstrdup(op);
+    ins->operand = xstrdup(operand);
+    return (Tac *)ins;
+}
+
+Tac *tac_make_label(const char *label)
+{
+    Tac_Label *ins = (Tac_Label *)tac_alloc(sizeof(Tac_Label), TAC_LABEL, tac_print_label);
+    ins->label = xstrdup(label);
+    return (Tac *)ins;
+}
+
+Tac *tac_make_goto(const char *label)
+{
+    Tac_Goto *ins = (Tac_Goto *)tac_alloc(sizeof(Tac_Goto), TAC_GOTO, tac_print_goto);
+    ins->label = xstrdup(label);
+    return (Tac *)ins;
+}
+
+Tac *tac_make_if_goto(const char *cond, const char *label)
+{
+    Tac_If_Goto *ins = (Tac_If_Goto *)tac_alloc(sizeof(Tac_If_Goto), TAC_IF_GOTO, tac_print_if_goto);
+    ins->cond = xstrdup(cond);
+    ins->label = xstrdup(label);
+    return (Tac *)ins;
+}
+
+Tac *tac_make_read(const char *target)
+{
+    Tac_Read *ins = (Tac_Read *)tac_alloc(sizeof(Tac_Read), TAC_READ, tac_print_read);
+    ins->target = xstrdup(target);
+    return (Tac *)ins;
+}
+
+Tac *tac_make_print(const char *value)
+{
+    Tac_Print *ins = (Tac_Print *)tac_alloc(sizeof(Tac_Print), TAC_PRINT, tac_print_print);
+    ins->value = xstrdup(value);
+    return (Tac *)ins;
+}
+
+// Tac *tac_make_return(void)
+// {
+//     Tac_Return *ins = (Tac_Return *)tac_alloc(sizeof(Tac_Return), TAC_RETURN, tac_print_return);
+//     return (Tac *)ins;
+// }
+
+Tac *tac_make_proc_begin(const char *name)
+{
+    Tac_Proc *ins = (Tac_Proc *)tac_alloc(sizeof(Tac_Proc), TAC_PROC_BEGIN, tac_print_proc_begin);
+    ins->name = xstrdup(name);
+    return (Tac *)ins;
+}
+
+Tac *tac_make_proc_end(const char *name)
+{
+    Tac_Proc *ins = (Tac_Proc *)tac_alloc(sizeof(Tac_Proc), TAC_PROC_END, tac_print_proc_end);
+    ins->name = xstrdup(name);
+    return (Tac *)ins;
+}
+
+Tac *tac_make_blank(void)
+{
+    Tac_Blank *ins = (Tac_Blank *)tac_alloc(sizeof(Tac_Blank), TAC_BLANK, tac_print_blank);
+    return (Tac *)ins;
+}
+
+static Tac *tac_clone(const Tac *instr)
+{
+    if (!instr)
+        return NULL;
+
+    switch (instr->kind)
+    {
+    case TAC_ASSIGN:
+    {
+        const Tac_Assign *ins = (const Tac_Assign *)instr;
+        return tac_make_assign(ins->dest, ins->src);
+    }
+    case TAC_BINARY:
+    {
+        const Tac_Binary *ins = (const Tac_Binary *)instr;
+        return tac_make_binary(ins->dest, ins->lhs, ins->op, ins->rhs);
+    }
+    case TAC_UNARY:
+    {
+        const Tac_Unary *ins = (const Tac_Unary *)instr;
+        return tac_make_unary(ins->dest, ins->op, ins->operand);
+    }
+    case TAC_LABEL:
+    {
+        const Tac_Label *ins = (const Tac_Label *)instr;
+        return tac_make_label(ins->label);
+    }
+    case TAC_GOTO:
+    {
+        const Tac_Goto *ins = (const Tac_Goto *)instr;
+        return tac_make_goto(ins->label);
+    }
+    case TAC_IF_GOTO:
+    {
+        const Tac_If_Goto *ins = (const Tac_If_Goto *)instr;
+        return tac_make_if_goto(ins->cond, ins->label);
+    }
+    case TAC_READ:
+    {
+        const Tac_Read *ins = (const Tac_Read *)instr;
+        return tac_make_read(ins->target);
+    }
+    case TAC_PRINT:
+    {
+        const Tac_Print *ins = (const Tac_Print *)instr;
+        return tac_make_print(ins->value);
+    }
+    case TAC_PROC_BEGIN:
+    {
+        const Tac_Proc *ins = (const Tac_Proc *)instr;
+        return tac_make_proc_begin(ins->name);
+    }
+    case TAC_PROC_END:
+    {
+        const Tac_Proc *ins = (const Tac_Proc *)instr;
+        return tac_make_proc_end(ins->name);
+    }
+    case TAC_BLANK:
+        return tac_make_blank();
+    default:
+        return NULL;
+    }
+}
+
+Tac_Seq *tac_seq_create(void)
+{
+    Tac_Seq *seq = (Tac_Seq *)checked_malloc(sizeof(Tac_Seq));
+    seq->head = NULL;
+    seq->tail = NULL;
+    return seq;
+}
+
+void tac_seq_append(Tac_Seq *seq, Tac *instr)
+{
+    if (!seq || !instr)
+        return;
+
+    instr->next = NULL;
+    if (!seq->head)
+        seq->head = instr;
+    else
+        seq->tail->next = instr;
+    seq->tail = instr;
+}
+
+void tac_seq_extend(Tac_Seq *seq, const Tac_Seq *other)
+{
+    if (!seq || !other || !other->head)
+        return;
+
+    for (const Tac *cur = other->head; cur; cur = cur->next)
+        tac_seq_append(seq, tac_clone(cur));
+}
+
+void tac_seq_print(const Tac_Seq *seq, FILE *out)
+{
+    if (!seq || !out)
+        return;
+
+    for (Tac *cur = seq->head; cur; cur = cur->next)
+    {
+        if (cur->print)
+            cur->print(cur, out);
+    }
+}
+
+static void set_node_code(Ast *node, Tac_Seq *code)
 {
     if (!code)
-        code = xstrdup("");
+        code = tac_seq_create();
 
-    if (node->tac_code)
-        free(node->tac_code);
     node->tac_code = code;
 }
 
@@ -182,8 +469,6 @@ static char *gen_expr(Ast *node);
 
 static char *gen_bool_expr(Ast *node)
 {
-    char *code = NULL;
-
     if (node->tac_place)
         return xstrdup(node->tac_place);
 
@@ -193,13 +478,18 @@ static char *gen_bool_expr(Ast *node)
     {
         Unary_Expr_Ast *u = (Unary_Expr_Ast *)node;
         char *child_place = gen_expr(u->child);
+
         char *result = gen_temp();
 
-        append_text(&code, u->child->tac_code);
-        append_linef(&code, "%s = !%s", result, child_place);
+        Tac_Seq *code = tac_seq_create();
+
+        tac_seq_extend(code, u->child->tac_code);
+        tac_seq_append(code, tac_make_unary(result, "!", child_place));
 
         set_node_code(node, code);
         set_node_place(node, result);
+
+        register_temp_type(result, BOOL_TYPE);
 
         free(child_place);
         return xstrdup(node->tac_place);
@@ -210,15 +500,20 @@ static char *gen_bool_expr(Ast *node)
         Logical_Ast *l = (Logical_Ast *)node;
         char *lhs_place = gen_expr(l->lhs);
         char *rhs_place = gen_expr(l->rhs);
-        char *result = gen_temp();
-        const char *op = (l->op == LOGICAL_AND) ? "&&" : "||";
 
-        append_text(&code, l->lhs->tac_code);
-        append_text(&code, l->rhs->tac_code);
-        append_linef(&code, "%s = %s %s %s", result, lhs_place, op, rhs_place);
+        char *result = gen_temp();
+
+        const char *op = (l->op == LOGICAL_AND) ? "&&" : "||";
+        Tac_Seq *code = tac_seq_create();
+
+        tac_seq_extend(code, l->lhs->tac_code);
+        tac_seq_extend(code, l->rhs->tac_code);
+        tac_seq_append(code, tac_make_binary(result, lhs_place, op, rhs_place));
 
         set_node_code(node, code);
         set_node_place(node, result);
+
+        register_temp_type(result, BOOL_TYPE);
 
         free(lhs_place);
         free(rhs_place);
@@ -304,7 +599,8 @@ static char *gen_expr(Ast *node)
     case AST_NAME:
     {
         Name_Ast *n = (Name_Ast *)node;
-        set_node_code(node, xstrdup(""));
+        Tac_Seq *code = tac_seq_create();
+        set_node_code(node, code);
         if (!n->entry || !n->entry->name)
             set_node_place(node, xstrdup("<undef>"));
         else
@@ -315,7 +611,8 @@ static char *gen_expr(Ast *node)
     case AST_NUMBER:
     {
         Number_Ast *n = (Number_Ast *)node;
-        set_node_code(node, xstrdup(""));
+        Tac_Seq *code = tac_seq_create();
+        set_node_code(node, code);
         set_node_place(node, xstrdup(n->value ? n->value : "0"));
         return xstrdup(node->tac_place);
     }
@@ -328,8 +625,10 @@ static char *gen_expr(Ast *node)
         Binary_Expr_Ast *b = (Binary_Expr_Ast *)node;
         char *lhs = gen_expr(b->lhs);
         char *rhs = gen_expr(b->rhs);
+
         char *tmp = gen_temp();
-        char *code = NULL;
+
+        Tac_Seq *code = tac_seq_create();
         const char *op = "+";
 
         if (node->kind == AST_MINUS)
@@ -339,31 +638,36 @@ static char *gen_expr(Ast *node)
         else if (node->kind == AST_DIV)
             op = "/";
 
-        append_text(&code, b->lhs->tac_code);
-        append_text(&code, b->rhs->tac_code);
-        append_linef(&code, "%s = %s %s %s", tmp, lhs, op, rhs);
+        tac_seq_extend(code, b->lhs->tac_code);
+        tac_seq_extend(code, b->rhs->tac_code);
+        tac_seq_append(code, tac_make_binary(tmp, lhs, op, rhs));
 
         set_node_code(node, code);
         set_node_place(node, tmp);
+
+        register_temp_type(tmp, b->lhs->data_type);
 
         free(lhs);
         free(rhs);
         return xstrdup(node->tac_place);
     }
 
-    // have to check
     case AST_UMINUS:
     {
         Unary_Expr_Ast *u = (Unary_Expr_Ast *)node;
-        char *tmp = gen_temp();
-        char *child = gen_expr(u->child);
-        char *code = NULL;
 
-        append_text(&code, u->child->tac_code);
-        append_linef(&code, "%s = -%s", tmp, child);
+        char *tmp = gen_temp();
+
+        char *child = gen_expr(u->child);
+        Tac_Seq *code = tac_seq_create();
+
+        tac_seq_extend(code, u->child->tac_code);
+        tac_seq_append(code, tac_make_unary(tmp, "-", child));
 
         set_node_code(node, code);
         set_node_place(node, tmp);
+
+        register_temp_type(tmp, u->child->data_type);
 
         free(child);
         return xstrdup(node->tac_place);
@@ -374,22 +678,25 @@ static char *gen_expr(Ast *node)
         Relational_Ast *r = (Relational_Ast *)node;
         char *lhs = gen_expr(r->lhs);
         char *rhs = gen_expr(r->rhs);
-        char *tmp = gen_temp();
-        char *code = NULL;
 
-        append_text(&code, r->lhs->tac_code);
-        append_text(&code, r->rhs->tac_code);
-        append_linef(&code, "%s = %s %s %s", tmp, lhs, relop_to_str(r->op), rhs);
+        char *tmp = gen_temp();
+
+        Tac_Seq *code = tac_seq_create();
+
+        tac_seq_extend(code, r->lhs->tac_code);
+        tac_seq_extend(code, r->rhs->tac_code);
+        tac_seq_append(code, tac_make_binary(tmp, lhs, relop_to_str(r->op), rhs));
 
         set_node_code(node, code);
         set_node_place(node, tmp);
+
+        register_temp_type(tmp, BOOL_TYPE);
 
         free(lhs);
         free(rhs);
         return xstrdup(node->tac_place);
     }
 
-    // gotta check
     case AST_LOGICAL:
     case AST_NOT:
         return gen_bool_expr(node);
@@ -403,22 +710,28 @@ static char *gen_expr(Ast *node)
         char *cond_place = gen_expr(i->cond);
         char *then_place = gen_expr(i->then_part);
         char *else_place = gen_expr(i->else_part);
-        char *t1 = gen_temp();
-        char *code = NULL;
 
-        append_text(&code, i->cond->tac_code);
-        append_linef(&code, "%s = !%s", t1, cond_place);
-        append_linef(&code, "if (%s) goto %s", t1, l1);
-        append_text(&code, i->then_part->tac_code);
-        append_linef(&code, "%s = %s", t2, then_place);
-        append_linef(&code, "goto %s", l2);
-        append_linef(&code, "%s:", l1);
-        append_text(&code, i->else_part->tac_code);
-        append_linef(&code, "%s = %s", t2, else_place);
-        append_linef(&code, "%s:", l2);
+        char *t1 = gen_temp();
+
+        Tac_Seq *code = tac_seq_create();
+
+        tac_seq_extend(code, i->cond->tac_code);
+        tac_seq_append(code, tac_make_unary(t1, "!", cond_place));
+        tac_seq_append(code, tac_make_if_goto(t1, l1));
+        tac_seq_extend(code, i->then_part->tac_code);
+        tac_seq_append(code, tac_make_assign(t2, then_place));
+        tac_seq_append(code, tac_make_goto(l2));
+        tac_seq_append(code, tac_make_label(l1));
+        tac_seq_extend(code, i->else_part->tac_code);
+        tac_seq_append(code, tac_make_assign(t2, else_place));
+        tac_seq_append(code, tac_make_label(l2));
 
         set_node_code(node, code);
         set_node_place(node, t2);
+
+        register_temp_type(t1, BOOL_TYPE);
+        // register_temp_type(t2, get_operand_type(t2));
+        register_temp_type(t2, i->then_part->data_type);
 
         free(cond_place);
         free(then_place);
@@ -434,11 +747,11 @@ static char *gen_expr(Ast *node)
         Assignment_Ast *a = (Assignment_Ast *)node;
         char *lhs = gen_expr(a->lhs);
         char *rhs = gen_expr(a->rhs);
-        char *code = NULL;
+        Tac_Seq *code = tac_seq_create();
 
-        append_text(&code, a->lhs->tac_code);
-        append_text(&code, a->rhs->tac_code);
-        append_linef(&code, "%s = %s", lhs, rhs);
+        tac_seq_extend(code, a->lhs->tac_code);
+        tac_seq_extend(code, a->rhs->tac_code);
+        tac_seq_append(code, tac_make_assign(lhs, rhs));
 
         set_node_code(node, code);
         set_node_place(node, xstrdup(lhs));
@@ -449,9 +762,12 @@ static char *gen_expr(Ast *node)
     }
 
     default:
-        set_node_code(node, xstrdup(""));
+    {
+        Tac_Seq *code = tac_seq_create();
+        set_node_code(node, code);
         set_node_place(node, xstrdup("0"));
         return xstrdup(node->tac_place);
+    }
     }
 }
 
@@ -459,31 +775,30 @@ static void gen_if_else_stmt(If_Else_Stmt_Ast *node, Ast *base)
 {
     char *cond_place = gen_bool_expr(node->cond);
 
-    char *code = NULL;
+    Tac_Seq *code = tac_seq_create();
 
     gen_stmt(node->then_part);
-    
-    
+
     char *neg_cond = gen_temp();
 
     char *end_label = gen_label();
     char *else_label = gen_label();
 
-
     if (node->else_part)
         gen_stmt(node->else_part);
 
-
-    append_text(&code, node->cond->tac_code);
-    append_linef(&code, "%s = !%s", neg_cond, cond_place);
-    append_linef(&code, "if (%s) goto %s", neg_cond, else_label);
-    append_text(&code, node->then_part ? node->then_part->tac_code : "");
-    append_linef(&code, "goto %s", end_label);
-    append_linef(&code, "%s:", else_label);
-    append_text(&code, node->else_part ? node->else_part->tac_code : "");
-    append_linef(&code, "%s:", end_label);
+    tac_seq_extend(code, node->cond->tac_code);
+    tac_seq_append(code, tac_make_unary(neg_cond, "!", cond_place));
+    tac_seq_append(code, tac_make_if_goto(neg_cond, else_label));
+    tac_seq_extend(code, node->then_part ? node->then_part->tac_code : NULL);
+    tac_seq_append(code, tac_make_goto(end_label));
+    tac_seq_append(code, tac_make_label(else_label));
+    tac_seq_extend(code, node->else_part ? node->else_part->tac_code : NULL);
+    tac_seq_append(code, tac_make_label(end_label));
 
     set_node_code(base, code);
+
+    register_temp_type(neg_cond, BOOL_TYPE);
 
     free(cond_place);
     free(neg_cond);
@@ -493,47 +808,41 @@ static void gen_if_else_stmt(If_Else_Stmt_Ast *node, Ast *base)
 
 static void gen_while_stmt(While_Ast *node, Ast *base)
 {
-    
-    
     char *cond_place = NULL;
     char *neg_cond = NULL;
-    char *code = NULL;
+    Tac_Seq *code = tac_seq_create();
 
-    
-    
     if (node->is_do_form)
     {
         gen_stmt(node->body);
-        cond_place = gen_bool_expr(node->cond);        
+        cond_place = gen_bool_expr(node->cond);
         char *start_label = gen_label();
 
-    
-        append_linef(&code, "%s:", start_label);
-        append_text(&code, node->body ? node->body->tac_code : "");
-
-        append_text(&code, node->cond->tac_code);
-        append_linef(&code, "if (%s) goto %s", cond_place, start_label);
+        tac_seq_append(code, tac_make_label(start_label));
+        tac_seq_extend(code, node->body ? node->body->tac_code : NULL);
+        tac_seq_extend(code, node->cond->tac_code);
+        tac_seq_append(code, tac_make_if_goto(cond_place, start_label));
 
         free(start_label);
     }
     else
     {
-        /* c1 || c2 || c3 || c4 for while: l1:, E.code, t1=!E.place/if t1 goto l2, S.code/goto l1, l2: */
         cond_place = gen_bool_expr(node->cond);
         gen_stmt(node->body);
         char *start_label = gen_label();
         char *end_label = gen_label();
 
-        
         neg_cond = gen_temp();
 
-        append_linef(&code, "%s:", start_label);
-        append_text(&code, node->cond->tac_code);
-        append_linef(&code, "%s = !%s", neg_cond, cond_place);
-        append_linef(&code, "if (%s) goto %s", neg_cond, end_label);
-        append_text(&code, node->body ? node->body->tac_code : "");
-        append_linef(&code, "goto %s", start_label);
-        append_linef(&code, "%s:", end_label);
+        tac_seq_append(code, tac_make_label(start_label));
+        tac_seq_extend(code, node->cond->tac_code);
+        tac_seq_append(code, tac_make_unary(neg_cond, "!", cond_place));
+        tac_seq_append(code, tac_make_if_goto(neg_cond, end_label));
+        tac_seq_extend(code, node->body ? node->body->tac_code : NULL);
+        tac_seq_append(code, tac_make_goto(start_label));
+        tac_seq_append(code, tac_make_label(end_label));
+
+        register_temp_type(neg_cond, BOOL_TYPE);
 
         free(start_label);
         free(end_label);
@@ -545,7 +854,6 @@ static void gen_while_stmt(While_Ast *node, Ast *base)
         free(cond_place);
     if (neg_cond)
         free(neg_cond);
-    
 }
 
 static void gen_stmt(Ast *node)
@@ -562,12 +870,12 @@ static void gen_stmt(Ast *node)
     {
         Sequence_Ast *s = (Sequence_Ast *)node;
         Ast_List *cur = s->statements;
-        char *code = NULL;
+        Tac_Seq *code = tac_seq_create();
 
         while (cur)
         {
             gen_stmt(cur->stmt);
-            append_text(&code, cur->stmt->tac_code);
+            tac_seq_extend(code, cur->stmt->tac_code);
             cur = cur->next;
         }
 
@@ -580,11 +888,11 @@ static void gen_stmt(Ast *node)
         Assignment_Ast *a = (Assignment_Ast *)node;
         char *lhs = gen_expr(a->lhs);
         char *rhs = gen_expr(a->rhs);
-        char *code = NULL;
+        Tac_Seq *code = tac_seq_create();
 
-        append_text(&code, a->lhs->tac_code);
-        append_text(&code, a->rhs->tac_code);
-        append_linef(&code, "%s = %s", lhs, rhs);
+        tac_seq_extend(code, a->lhs->tac_code);
+        tac_seq_extend(code, a->rhs->tac_code);
+        tac_seq_append(code, tac_make_assign(lhs, rhs));
 
         set_node_code(node, code);
         free(lhs);
@@ -596,10 +904,10 @@ static void gen_stmt(Ast *node)
     {
         Read_Ast *r = (Read_Ast *)node;
         char *target = gen_expr(r->var);
-        char *code = NULL;
+        Tac_Seq *code = tac_seq_create();
 
-        append_text(&code, r->var->tac_code);
-        append_linef(&code, "read %s", target);
+        tac_seq_extend(code, r->var->tac_code);
+        tac_seq_append(code, tac_make_read(target));
 
         set_node_code(node, code);
         free(target);
@@ -610,10 +918,10 @@ static void gen_stmt(Ast *node)
     {
         Print_Ast *p = (Print_Ast *)node;
         char *value = gen_expr(p->expr);
-        char *code = NULL;
+        Tac_Seq *code = tac_seq_create();
 
-        append_text(&code, p->expr->tac_code);
-        append_linef(&code, "print %s", value);
+        tac_seq_extend(code, p->expr->tac_code);
+        tac_seq_append(code, tac_make_print(value));
 
         set_node_code(node, code);
         free(value);
@@ -629,14 +937,11 @@ static void gen_stmt(Ast *node)
         gen_while_stmt((While_Ast *)node, node);
         return;
 
-    case AST_RETURN:
-        set_node_code(node, format_string("return\n"));
-        return;
-
     default:
     {
         char *value = gen_expr(node);
-        set_node_code(node, xstrdup(node->tac_code));
+        if (!node->tac_code)
+            set_node_code(node, tac_seq_create());
         free(value);
         return;
     }
@@ -652,7 +957,7 @@ static void gen_program(Ast *root)
     {
         Program_Ast *p = (Program_Ast *)root;
         Ast_List *cur = p->procedures;
-        char *code = NULL;
+        Tac_Seq *code = tac_seq_create();
 
         while (cur)
         {
@@ -662,15 +967,15 @@ static void gen_program(Ast *root)
             {
                 Procedure_Ast *pr = (Procedure_Ast *)proc;
                 gen_stmt(pr->body);
-                append_linef(&code, "proc %s begin", pr->name ? pr->name : "<anon>");
-                append_text(&code, pr->body->tac_code);
-                append_linef(&code, "proc %s end", pr->name ? pr->name : "<anon>");
-                append_text(&code, "\n");
+                tac_seq_append(code, tac_make_proc_begin(pr->name ? pr->name : "<anon>"));
+                tac_seq_extend(code, pr->body->tac_code);
+                tac_seq_append(code, tac_make_proc_end(pr->name ? pr->name : "<anon>"));
+                tac_seq_append(code, tac_make_blank());
             }
             else
             {
                 gen_stmt(proc);
-                append_text(&code, proc->tac_code);
+                tac_seq_extend(code, proc->tac_code);
             }
 
             cur = cur->next;
@@ -683,12 +988,12 @@ static void gen_program(Ast *root)
     if (root->kind == AST_PROCEDURE)
     {
         Procedure_Ast *pr = (Procedure_Ast *)root;
-        char *code = NULL;
+        Tac_Seq *code = tac_seq_create();
 
         gen_stmt(pr->body);
-        append_linef(&code, "proc %s begin", pr->name ? pr->name : "<anon>");
-        append_text(&code, pr->body->tac_code);
-        append_linef(&code, "proc %s end", pr->name ? pr->name : "<anon>");
+        tac_seq_append(code, tac_make_proc_begin(pr->name ? pr->name : "<anon>"));
+        tac_seq_extend(code, pr->body->tac_code);
+        tac_seq_append(code, tac_make_proc_end(pr->name ? pr->name : "<anon>"));
         set_node_code(root, code);
         return;
     }
@@ -699,7 +1004,14 @@ static void gen_program(Ast *root)
 void tac_reset_counters(void)
 {
     nextTempNumber = 0;
+    nextSTempNumber = 0;
     nextLabelNumber = 0;
+}
+
+static void emit_code(const Tac_Seq *code)
+{
+    if (code && tac_out)
+        tac_seq_print(code, tac_out);
 }
 
 void tac_generate(Ast *root, FILE *out)

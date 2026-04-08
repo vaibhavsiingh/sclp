@@ -14,12 +14,17 @@ static FILE *tac_out = NULL;
 typedef struct TempDt
 {
     char *name;
+    char *proc_name;
     Data_Type type;
     struct TempDt *next;
 } TempDt;
 
 static TempDt *temp_map_head = NULL;
 static TempDt *temp_map_tail = NULL;
+static const char *current_proc_context = NULL;
+
+static char *current_return_label = NULL;
+static char *current_return_temp = NULL;
 
 static void *checked_malloc(size_t size)
 {
@@ -30,6 +35,17 @@ static void *checked_malloc(size_t size)
         exit(1);
     }
     return ptr;
+}
+
+static void *checked_realloc(void *ptr, size_t size)
+{
+    void *new_ptr = realloc(ptr, size);
+    if (!new_ptr)
+    {
+        fprintf(stderr, "Out of memory in TAC generator\n");
+        exit(1);
+    }
+    return new_ptr;
 }
 
 static char *xstrdup(const char *s)
@@ -101,14 +117,51 @@ static void register_temp_type(char *name, Data_Type type)
     // printf("type of %s = %d\n", name, (int)type);
 
     node->name = xstrdup(name);
+    node->proc_name = current_proc_context ? xstrdup(current_proc_context) : NULL;
     node->type = type;
     node->next = NULL;
+}
+
+static void free_temp_map(void)
+{
+    TempDt *cur = temp_map_head;
+
+    while (cur)
+    {
+        TempDt *next = cur->next;
+        free(cur->name);
+        if (cur->proc_name)
+            free(cur->proc_name);
+        free(cur);
+        cur = next;
+    }
+
+    temp_map_head = NULL;
+    temp_map_tail = NULL;
+}
+
+static void reset_temp_counters_for_function(void)
+{
+    nextTempNumber = 0;
+    nextSTempNumber = 0;
 }
 
 Data_Type get_operand_type(char *name)
 {
     TempDt *cur = temp_map_head;
 
+    if (current_proc_context)
+    {
+        while (cur)
+        {
+            if (strcmp(cur->name, name) == 0 && cur->proc_name &&
+                strcmp(cur->proc_name, current_proc_context) == 0)
+                return cur->type;
+            cur = cur->next;
+        }
+    }
+
+    cur = temp_map_head;
     while (cur)
     {
         if (strcmp(cur->name, name) == 0)
@@ -219,10 +272,22 @@ static void tac_print_print(Tac *tac, FILE *out)
         fprintf(out, "print %s\n", ins->value);
 }
 
+static void tac_print_call(Tac *tac, FILE *out)
+{
+    Tac_Call *ins = (Tac_Call *)tac;
+    if (ins->dest && *ins->dest)
+        fprintf(out, "%s = %s(%s)\n", ins->dest, ins->name, ins->args ? ins->args : "");
+    else
+        fprintf(out, "%s(%s)\n", ins->name, ins->args ? ins->args : "");
+}
+
 static void tac_print_return(Tac *tac, FILE *out)
 {
-    (void)tac;
-    fprintf(out, "return\n");
+    Tac_Return *ins = (Tac_Return *)tac;
+    if (ins->value && *ins->value)
+        fprintf(out, "return %s\n", ins->value);
+    else
+        fprintf(out, "return\n");
 }
 
 static void tac_print_proc_begin(Tac *tac, FILE *out)
@@ -317,9 +382,19 @@ Tac *tac_make_print(const char *value)
     return (Tac *)ins;
 }
 
-Tac *tac_make_return(void)
+Tac *tac_make_call(const char *dest, const char *name, const char *args)
+{
+    Tac_Call *ins = (Tac_Call *)tac_alloc(sizeof(Tac_Call), TAC_CALL, tac_print_call);
+    ins->dest = dest ? xstrdup(dest) : NULL;
+    ins->name = xstrdup(name ? name : "");
+    ins->args = xstrdup(args ? args : "");
+    return (Tac *)ins;
+}
+
+Tac *tac_make_return(const char *value)
 {
     Tac_Return *ins = (Tac_Return *)tac_alloc(sizeof(Tac_Return), TAC_RETURN, tac_print_return);
+    ins->value = value ? xstrdup(value) : NULL;
     return (Tac *)ins;
 }
 
@@ -390,8 +465,16 @@ static Tac *tac_clone(const Tac *instr)
         const Tac_Print *ins = (const Tac_Print *)instr;
         return tac_make_print(ins->value);
     }
+    case TAC_CALL:
+    {
+        const Tac_Call *ins = (const Tac_Call *)instr;
+        return tac_make_call(ins->dest, ins->name, ins->args);
+    }
     case TAC_RETURN:
-        return tac_make_return();
+    {
+        const Tac_Return *ins = (const Tac_Return *)instr;
+        return tac_make_return(ins->value);
+    }
     case TAC_PROC_BEGIN:
     {
         const Tac_Proc *ins = (const Tac_Proc *)instr;
@@ -529,6 +612,98 @@ static char *gen_bool_expr(Ast *node)
         return xstrdup(node->tac_place);
     }
     }
+}
+
+static Data_Type resolve_call_return_type(const Call_Ast *call)
+{
+    Function_Entry *fn;
+
+    if (!call)
+        return VOID_TYPE;
+
+    fn = lookup_function(call->name);
+    if (fn)
+        return fn->return_type;
+
+    return call->base.data_type;
+}
+
+static char *join_call_args(char **args, int argc)
+{
+    size_t total = 0;
+    char *buf;
+    char *p;
+
+    if (argc <= 0)
+        return xstrdup("");
+
+    for (int i = 0; i < argc; i++)
+        total += strlen(args[i]);
+
+    if (argc > 1)
+        total += (size_t)(argc - 1) * 2;
+
+    buf = (char *)checked_malloc(total + 1);
+    p = buf;
+
+    for (int i = 0; i < argc; i++)
+    {
+        size_t n = strlen(args[i]);
+        if (i > 0)
+        {
+            *p++ = ',';
+            *p++ = ' ';
+        }
+        memcpy(p, args[i], n);
+        p += n;
+    }
+    *p = '\0';
+    return buf;
+}
+
+static Tac_Seq *gen_call_code(Call_Ast *call, char **out_place, int want_result)
+{
+    Tac_Seq *code = tac_seq_create();
+    Ast_List *arg = call ? call->args : NULL;
+    char **arg_places = NULL;
+    int argc = 0;
+    int cap = 0;
+
+    while (arg)
+    {
+        char *arg_place = gen_expr(arg->stmt);
+        tac_seq_extend(code, arg->stmt->tac_code);
+        if (argc == cap)
+        {
+            cap = cap ? cap * 2 : 4;
+            arg_places = (char **)checked_realloc(arg_places, sizeof(*arg_places) * (size_t)cap);
+        }
+        arg_places[argc++] = arg_place;
+        arg = arg->next;
+    }
+
+    char *args = join_call_args(arg_places, argc);
+
+    if (want_result)
+    {
+        char *tmp = gen_temp();
+        tac_seq_append(code, tac_make_call(tmp, call ? call->name : "", args));
+        if (out_place)
+            *out_place = tmp;
+    }
+    else
+    {
+        tac_seq_append(code, tac_make_call(NULL, call ? call->name : "", args));
+        if (out_place)
+            *out_place = NULL;
+    }
+
+    for (int i = 0; i < argc; i++)
+        free(arg_places[i]);
+    free(arg_places);
+    free(args);
+
+    return code;
 }
 
 const char *ast_kind_to_string(Ast_Kind kind)
@@ -749,24 +924,21 @@ static char *gen_expr(Ast *node)
     case AST_CALL:
     {
         Call_Ast *c = (Call_Ast *)node;
-        Tac_Seq *code = tac_seq_create();
-        Ast_List *arg = c->args;
-
-        while (arg)
-        {
-            char *arg_place = gen_expr(arg->stmt);
-            tac_seq_extend(code, arg->stmt->tac_code);
-            free(arg_place);
-            arg = arg->next;
-        }
-
-        char *tmp = gen_temp();
-        tac_seq_append(code, tac_make_assign(tmp, "0"));
+        Data_Type ret_type = resolve_call_return_type(c);
+        int want_result = (ret_type != VOID_TYPE);
+        char *result_place = NULL;
+        Tac_Seq *code = gen_call_code(c, &result_place, want_result);
 
         set_node_code(node, code);
-        set_node_place(node, tmp);
-
-        register_temp_type(tmp, node->data_type == VOID_TYPE ? INT_TYPE : node->data_type);
+        if (want_result && result_place)
+        {
+            set_node_place(node, result_place);
+            register_temp_type(result_place, ret_type);
+        }
+        else
+        {
+            set_node_place(node, xstrdup("0"));
+        }
 
         return xstrdup(node->tac_place);
     }
@@ -957,6 +1129,14 @@ static void gen_stmt(Ast *node)
         return;
     }
 
+    case AST_CALL:
+    {
+        Call_Ast *c = (Call_Ast *)node;
+        Tac_Seq *code = gen_call_code(c, NULL, 0);
+        set_node_code(node, code);
+        return;
+    }
+
     case AST_RETURN:
     {
         Return_Ast *r = (Return_Ast *)node;
@@ -966,10 +1146,15 @@ static void gen_stmt(Ast *node)
         {
             char *value = gen_expr(r->expr);
             tac_seq_extend(code, r->expr->tac_code);
+            if (current_return_temp)
+                tac_seq_append(code, tac_make_assign(current_return_temp, value));
             free(value);
         }
 
-        tac_seq_append(code, tac_make_return());
+        if (current_return_label)
+            tac_seq_append(code, tac_make_goto(current_return_label));
+        else
+            tac_seq_append(code, tac_make_return(current_return_temp));
         set_node_code(node, code);
         return;
     }
@@ -994,6 +1179,117 @@ static void gen_stmt(Ast *node)
     }
 }
 
+static int is_empty_sequence(const Ast *node)
+{
+    const Sequence_Ast *seq;
+
+    if (!node || node->kind != AST_SEQUENCE)
+        return 0;
+
+    seq = (const Sequence_Ast *)node;
+    return seq->statements == NULL;
+}
+
+static int contains_return_stmt(const Ast *node)
+{
+    if (!node)
+        return 0;
+
+    switch (node->kind)
+    {
+    case AST_RETURN:
+        return 1;
+    case AST_SEQUENCE:
+    {
+        const Sequence_Ast *seq = (const Sequence_Ast *)node;
+        Ast_List *cur = seq->statements;
+        while (cur)
+        {
+            if (contains_return_stmt(cur->stmt))
+                return 1;
+            cur = cur->next;
+        }
+        return 0;
+    }
+    case AST_IF_ELSE_STMT:
+    {
+        const If_Else_Stmt_Ast *stmt = (const If_Else_Stmt_Ast *)node;
+        if (contains_return_stmt(stmt->then_part))
+            return 1;
+        if (stmt->else_part && contains_return_stmt(stmt->else_part))
+            return 1;
+        return 0;
+    }
+    case AST_WHILE:
+    case AST_DO_WHILE:
+    {
+        const While_Ast *wh = (const While_Ast *)node;
+        return contains_return_stmt(wh->body);
+    }
+    default:
+        return 0;
+    }
+}
+
+static void emit_procedure_code(Tac_Seq *code, Procedure_Ast *pr, int add_blank)
+{
+    int has_return = 0;
+    int needs_return_label = 0;
+
+    if (!code || !pr)
+        return;
+
+    if (pr->return_type == VOID_TYPE && is_empty_sequence(pr->body))
+        return;
+
+    reset_temp_counters_for_function();
+
+    current_return_label = NULL;
+    current_return_temp = NULL;
+
+    has_return = contains_return_stmt(pr->body);
+    needs_return_label = (pr->return_type != VOID_TYPE) || has_return;
+
+    if (needs_return_label)
+        current_return_label = gen_label();
+
+    if (pr->return_type != VOID_TYPE)
+    {
+        current_return_temp = gen_stemp();
+        register_temp_type(current_return_temp, pr->return_type);
+    }
+
+    tac_set_current_proc(pr->name ? pr->name : "<anon>");
+    gen_stmt(pr->body);
+
+    tac_seq_append(code, tac_make_proc_begin(pr->name ? pr->name : "<anon>"));
+    tac_seq_extend(code, pr->body ? pr->body->tac_code : NULL);
+
+    if (needs_return_label)
+    {
+        tac_seq_append(code, tac_make_label(current_return_label));
+        tac_seq_append(code, tac_make_return(current_return_temp));
+    }
+
+    tac_seq_append(code, tac_make_proc_end(pr->name ? pr->name : "<anon>"));
+    if (add_blank)
+        tac_seq_append(code, tac_make_blank());
+
+    if (current_return_label)
+    {
+        free(current_return_label);
+        current_return_label = NULL;
+    }
+
+    if (current_return_temp)
+    {
+        free(current_return_temp);
+        current_return_temp = NULL;
+    }
+
+    tac_set_current_proc(NULL);
+}
+
 static void gen_program(Ast *root)
 {
     if (!root)
@@ -1011,12 +1307,7 @@ static void gen_program(Ast *root)
 
             if (proc && proc->kind == AST_PROCEDURE)
             {
-                Procedure_Ast *pr = (Procedure_Ast *)proc;
-                gen_stmt(pr->body);
-                tac_seq_append(code, tac_make_proc_begin(pr->name ? pr->name : "<anon>"));
-                tac_seq_extend(code, pr->body->tac_code);
-                tac_seq_append(code, tac_make_proc_end(pr->name ? pr->name : "<anon>"));
-                tac_seq_append(code, tac_make_blank());
+                emit_procedure_code(code, (Procedure_Ast *)proc, 1);
             }
             else
             {
@@ -1036,10 +1327,7 @@ static void gen_program(Ast *root)
         Procedure_Ast *pr = (Procedure_Ast *)root;
         Tac_Seq *code = tac_seq_create();
 
-        gen_stmt(pr->body);
-        tac_seq_append(code, tac_make_proc_begin(pr->name ? pr->name : "<anon>"));
-        tac_seq_extend(code, pr->body->tac_code);
-        tac_seq_append(code, tac_make_proc_end(pr->name ? pr->name : "<anon>"));
+        emit_procedure_code(code, pr, 0);
         set_node_code(root, code);
         return;
     }
@@ -1049,9 +1337,15 @@ static void gen_program(Ast *root)
 
 void tac_reset_counters(void)
 {
-    nextTempNumber = 0;
-    nextSTempNumber = 0;
+    free_temp_map();
+    reset_temp_counters_for_function();
     nextLabelNumber = 0;
+    tac_set_current_proc(NULL);
+}
+
+void tac_set_current_proc(const char *name)
+{
+    current_proc_context = name;
 }
 
 static void emit_code(const Tac_Seq *code)

@@ -14,6 +14,7 @@ typedef enum
     TAC_IF_GOTO,
     TAC_READ,
     TAC_PRINT,
+    TAC_CALL,
     TAC_RETURN,
     TAC_PROC_BEGIN,
     TAC_PROC_END,
@@ -94,12 +95,21 @@ typedef struct
 typedef struct
 {
     Tac base;
+    char *dest;
+    char *name;
+    char *args;
+} Tac_Call;
+
+typedef struct
+{
+    Tac base;
     char *name;
 } Tac_Proc;
 
 typedef struct
 {
     Tac base;
+    char *value;
 } Tac_Return;
 
 typedef struct
@@ -120,7 +130,8 @@ Tac *tac_make_goto(const char *label);
 Tac *tac_make_if_goto(const char *cond, const char *label);
 Tac *tac_make_read(const char *target);
 Tac *tac_make_print(const char *value);
-Tac *tac_make_return(void);
+Tac *tac_make_call(const char *dest, const char *name, const char *args);
+Tac *tac_make_return(const char *value);
 Tac *tac_make_proc_begin(const char *name);
 Tac *tac_make_proc_end(const char *name);
 Tac *tac_make_blank(void);
@@ -133,6 +144,9 @@ int tac_generate_to_path(Ast *root, const char *path);
 
 /* Reset temporary and label counters for deterministic output across runs. */
 void tac_reset_counters(void);
+
+/* Set current procedure name for temp type lookup. */
+void tac_set_current_proc(const char *name);
 
 Data_Type get_operand_type(char *name);
 

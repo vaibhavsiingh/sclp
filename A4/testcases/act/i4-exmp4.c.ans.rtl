@@ -1,0 +1,76 @@
+**PROCEDURE: main
+**BEGIN: RTL Statements
+iLoad: v0 <- 5
+read
+store: n_ <- v0
+load: v0 <- n_
+iLoad: t1 <- 5
+sge: t0 <- v0, t1
+iLoad: t1 <- 10
+sle: t2 <- v0, t1
+and: t0 <- t0, t2
+not: t0 <- t0
+bgtz: t0, Label3
+
+Label0:
+iLoad: v0 <- 0
+store: t1 <- v0
+iLoad: v0 <- 0
+sgt: t0 <- v0, t1
+not: t0 <- t0
+bgtz: t0, Label11
+iLoad: v0 <- 1
+load: a0 <- n_
+write
+iLoad: v0 <- 4
+load_addr: a0 <- _str_0
+write
+load: v0 <- n_
+iLoad: t1 <- 1
+sub: t0 <- v0, t1
+store: n_ <- t0
+goto: Label0
+
+Label1:
+goto: Label2
+
+Label3:
+load: v0 <- n_
+iLoad: t1 <- 1024
+sle: t0 <- v0, t1
+iLoad: v0 <- 1024
+uminus: t1 <- v0
+load: v0 <- n_
+sge: t2 <- v0, t1
+and: t0 <- t0, t2
+not: t0 <- t0
+bgtz: t0, Label6
+
+Label4:
+iLoad: v0 <- 1
+load: a0 <- n_
+write
+iLoad: v0 <- 4
+load_addr: a0 <- _str_0
+write
+load: v0 <- n_
+iLoad: t1 <- 2
+div: t0 <- v0, t1
+store: n_ <- t0
+load: v0 <- n_
+iLoad: t1 <- 0
+sne: t0 <- v0, t1
+bgtz: t0, Label4
+goto: Label5
+
+Label6:
+iLoad: v0 <- 4
+load_addr: a0 <- _str_1
+write
+iLoad: v0 <- 1
+load: a0 <- n_
+write
+
+Label5:
+
+**END: RTL Statements

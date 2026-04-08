@@ -1,0 +1,37 @@
+*PROCEDURE: main
+**BEGIN: RTL Statements
+
+    load.d: f2 <- 2.2
+    uminus.d: f4 <- f2
+    store.d: a <- f4
+    load.d: f2 <- a
+    load.d: f4 <- 3.2
+    add.d:    f2 <- f2, f4
+    store.d: b <- f2
+    load.d: f2 <- a
+    load.d: f4 <- b
+    add.d:    f2 <- f2, f4
+    load.d: f2 <- a
+    load.d: f6 <- b
+    sub.d:    f4 <- f2, f6
+    seq.d:    f2, f4
+    iLoad:  v0 <- 1
+    move:   t0 <- zero
+    movf:   t0 <- v0, 0
+    not:    v0 <- t0
+    bgtz:   v0, Label0
+    load.d: f2 <- a
+    load.d: f4 <- b
+    mul.d:    f2 <- f2, f4
+    store.d: stemp0 <- f2
+    goto:   Label1
+Label0:
+    load.d: f2 <- a
+    load.d: f4 <- b
+    sub.d:    f2 <- f2, f4
+    store.d: stemp0 <- f2
+Label1:
+    load:   v0 <- stemp0
+    store:  d <- v0
+
+**END: RTL Statements

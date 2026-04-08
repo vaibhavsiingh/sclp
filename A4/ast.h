@@ -3,6 +3,8 @@
 
 #include <stdio.h>
 
+typedef struct Tac_Seq Tac_Seq;
+
 typedef enum
 {
     AST_ASSIGN,
@@ -71,7 +73,7 @@ struct Ast
     Data_Type data_type;
     Ast_Check_Fn check_ast;
     Ast_Print_Fn print;
-    char *tac_code;
+    Tac_Seq *tac_code;
     char *tac_place;
 };
 

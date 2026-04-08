@@ -1,0 +1,45 @@
+**PROCEDURE: main
+**BEGIN: RTL Statements
+iLoad:      v0 <- 0
+store:      test_ <- v0
+iLoad:      v0 <- 10
+store:      loop_ <- v0
+Label2:
+load:       v0 <- loop_
+iLoad:      t1 <- 1
+sgt:        t0 <- v0, t1
+not:        v0 <- t0
+bgtz:       v0, Label3
+load:       v0 <- loop_
+iLoad:      t1 <- 1
+sub:        t0 <- v0, t1
+store:      loop_ <- t0
+iLoad:      v0 <- 0
+load:       t1 <- loop_
+seq:        t0 <- v0, t1
+not:        v0 <- t0
+bgtz:       v0, Label11
+iLoad:      v0 <- 1
+load:       a0 <- loop_
+write
+goto:       Label0
+Label11:
+iLoad:      v0 <- 1
+load:       a0 <- test_
+write
+Label0:
+goto:       Label2
+Label3:
+Label4:
+load:       v0 <- loop_
+iLoad:      t1 <- 1
+add:        t0 <- v0, t1
+store:      loop_ <- t0
+load:       v0 <- loop_
+iLoad:      t1 <- 10
+slt:        t0 <- v0, t1
+bgtz:       t0, Label4
+iLoad:      v0 <- 1
+load:       a0 <- loop_
+write
+**END: RTL Statements

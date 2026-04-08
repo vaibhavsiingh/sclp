@@ -1,0 +1,72 @@
+**PROCEDURE: main
+**BEGIN: RTL Statements
+    iLoad:      v0 <- 5
+    read
+    store:      local_ <- v0
+    load:       v0 <- local_
+    store:      global2_ <- v0
+    iLoad:      v0 <- 5
+    store:      global1_ <- v0
+    load:       v0 <- global2_
+    load:       t1 <- global1_
+    sgt:        t0 <- v0, t1
+    load:       v0 <- local_
+    iLoad:      t2 <- 2
+    sub:        t1 <- v0, t2
+    iLoad:      t2 <- 0
+    sne:        v0 <- t1, t2
+    and:        t1 <- t0, v0
+    not:        v0 <- t1
+    bgtz:       v0 , Label0
+    iLoad:      v0 <- 1
+    store:      stemp0 <- v0
+    goto:       Label1
+
+Label0:
+    iLoad:      v0 <- 0
+    store:      stemp0 <- v0
+
+Label1:
+    load:       v0 <- stemp0
+    store:      ans_ <- v0
+    load:       v0 <- ans_
+    iLoad:      t1 <- 1
+    seq:        t0 <- v0, t1
+    not:        v0 <- t0
+    bgtz:       v0 , Label5
+
+Label2:
+    load:       v0 <- global2_
+    iLoad:      t1 <- 0
+    sgt:        t0 <- v0, t1
+    not:        v0 <- t0
+    bgtz:       v0 , Label3
+    iLoad:      v0 <- 1
+    load:       a0 <- global2_
+    write
+    load:       v0 <- global2_
+    iLoad:      t1 <- 1
+    sub:        t0 <- v0, t1
+    store:      global2_ <- t0
+    goto:       Label2
+
+Label3:
+    goto:       Label4
+
+Label5:
+
+Label6:
+    iLoad:      v0 <- 1
+    load:       a0 <- global2_
+    write
+    load:       v0 <- global2_
+    iLoad:      t1 <- 1
+    add:        t0 <- v0, t1
+    store:      global2_ <- t0
+    load:       v0 <- global2_
+    iLoad:      t1 <- 10
+    slt:        t0 <- v0, t1
+    bgtz:       t0 , Label6
+
+Label4:
+**END: RTL Statements

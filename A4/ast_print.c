@@ -325,7 +325,7 @@ void print_print_ast(Ast *ast, FILE *file)
     print_indent(file);
     fprintf(file, "Print\n");
 
-    indent_level++;
+    indent_level++;    
     pr->expr->print(pr->expr, file);
     indent_level--;
 }
