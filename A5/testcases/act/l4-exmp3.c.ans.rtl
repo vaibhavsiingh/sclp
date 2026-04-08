@@ -1,0 +1,24 @@
+**PROCEDURE: main
+**BEGIN: RTL Statements
+iLoad:   v0 <- 5
+store:   a <- v0
+iLoad:   v0 <- 0
+store:   i_ <- v0
+
+Label0:
+load:    v0 <- i_
+iLoad:   t1 <- a
+slt:     t0 <- v0, t1
+not:     v0 <- t0
+bgtz:    v0, Label1
+iLoad:   v0 <- i_
+iLoad:   t1 <- 1
+add:     t0 <- v0, t1
+store:   i_ <- t0
+iLoad:   v0 <- 1
+iLoad:   a0 <- i_
+write
+goto:    Label0
+
+Label1:
+**END: RTL Statements

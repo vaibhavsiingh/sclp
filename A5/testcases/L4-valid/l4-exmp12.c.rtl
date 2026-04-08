@@ -1,0 +1,32 @@
+**PROCEDURE: main
+**BEGIN: RTL Statements
+    iLoad.d: f2 <- 2.1
+    store.d: b <- f2
+    iLoad.d: f2 <- 8.3
+    store.d: c <- f2
+    load.d: f2 <- b
+    load.d: f6 <- c
+    div.d:    f4 <- f2, f6
+    load.d: f6 <- a
+    div.d:    f2 <- f4, f6
+    load.d: f6 <- b
+    mul.d:    f4 <- f2, f6
+    load.d: f2 <- a
+    add.d:    f6 <- f2, f4
+    iLoad.d: f2 <- 0.0
+    sle.d:    f6, f2
+    iLoad:  v0 <- 1
+    move:   t0 <- zero
+    movf:    t0 <- v0, 0
+    not:    t1 <- t0
+    bgtz:   t1, Label1
+    load.d: f2 <- a
+    iLoad.d: f6 <- 1.0
+    sub.d:    f4 <- f2, f6
+    store.d: a <- f4
+    goto:   Label0
+
+Label1:
+
+Label0:
+**END: RTL Statements
