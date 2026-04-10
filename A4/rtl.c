@@ -884,7 +884,7 @@ static void emit_copy_assign(const char *dst, const char *rhs, RtlState *state, 
 {
     Data_Type rhs_type = infer_operand_type(rhs, state);
     Data_Type dst_type = infer_operand_type(dst, state);
-    printf("%d", (int)rhs_type);
+ //   printf("%d", (int)rhs_type);
     const char *rhs_reg = emit_operand_reg(rhs, rhs_type, state, out, NULL, NULL, NULL);
 
     if (is_temp_name(dst))

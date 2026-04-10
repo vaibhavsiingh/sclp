@@ -384,7 +384,10 @@ void print_procedure_ast(Ast *ast, FILE *file)
     Procedure_Ast *proc = (Procedure_Ast *)ast;
 
     print_indent(file);
-    fprintf(file, "Procedure %s\n", proc->name);
+    if (proc->has_body)
+        fprintf(file, "Procedure %s\n", proc->name);
+    else
+        fprintf(file, "ProcedureDecl %s\n", proc->name);
 
     indent_level++;
     if (proc->params)
@@ -401,7 +404,8 @@ void print_procedure_ast(Ast *ast, FILE *file)
         }
         indent_level--;
     }
-    proc->body->print(proc->body, file);
+    if (proc->has_body && proc->body)
+        proc->body->print(proc->body, file);
     indent_level--;
 }
 

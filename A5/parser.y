@@ -73,6 +73,57 @@ static int register_function(const char *name, Data_Type ret_type,
 
     return 1;
 }
+
+static int same_procedure_signature(const Procedure_Ast *lhs, const Procedure_Ast *rhs)
+{
+    Param_Type_List *lhs_params;
+    Param_Type_List *rhs_params;
+    int same = 0;
+
+    if (!lhs || !rhs)
+        return 0;
+
+    if (!lhs->name || !rhs->name)
+        return 0;
+
+    if (strcmp(lhs->name, rhs->name) != 0)
+        return 0;
+
+    if (lhs->return_type != rhs->return_type)
+        return 0;
+
+    lhs_params = param_types_from_ast_list(lhs->params);
+    rhs_params = param_types_from_ast_list(rhs->params);
+
+    same = compare_param_type_lists(lhs_params, rhs_params);
+
+    free_param_type_list(lhs_params);
+    free_param_type_list(rhs_params);
+
+    return same;
+}
+
+static Procedure_Ast *find_matching_decl(Program_Ast *prog, const Procedure_Ast *def_proc)
+{
+    Ast_List *cur;
+
+    if (!prog || !def_proc)
+        return NULL;
+
+    cur = prog->procedures;
+    while (cur)
+    {
+        if (cur->stmt && cur->stmt->kind == AST_PROCEDURE)
+        {
+            Procedure_Ast *proc = (Procedure_Ast *)cur->stmt;
+            if (!proc->has_body && same_procedure_signature(proc, def_proc))
+                return proc;
+        }
+        cur = cur->next;
+    }
+
+    return NULL;
+}
 %}
 
 %union {
@@ -109,6 +160,7 @@ static int register_function(const char *name, Data_Type ret_type,
 %type <ast> block_statement
 %type <ast> statement_list
 %type <ast> function_def
+%type <ast> function_decl
 %type <ast> function_call
 %type <ast> call_statement
 %type <ast> program
@@ -136,7 +188,33 @@ static int register_function(const char *name, Data_Type ret_type,
 program
         : pre_def_list function_def_list
             {
-                    root = $2;
+            Program_Ast *prog = (Program_Ast *)$1;
+            Program_Ast *defs = (Program_Ast *)$2;
+            Ast_List *cur = defs ? defs->procedures : NULL;
+
+            if (!prog) {
+                prog = (Program_Ast *)make_program_ast(yylineno);
+            }
+
+            while (cur) {
+                Ast *node = cur->stmt;
+                if (node && node->kind == AST_PROCEDURE) {
+                    Procedure_Ast *def_proc = (Procedure_Ast *)node;
+                    Procedure_Ast *decl_proc = find_matching_decl(prog, def_proc);
+
+                    if (decl_proc) {
+                        decl_proc->has_body = 1;
+                        decl_proc->body = def_proc->body;
+                    } else {
+                        program_append(prog, node);
+                    }
+                } else if (node) {
+                    program_append(prog, node);
+                }
+                cur = cur->next;
+            }
+
+            root = (Ast *)prog;
                     if (!sa_parse && !main_defined) {
                             yyerror("main function must be defined");
                             YYERROR;
@@ -147,11 +225,14 @@ program
 pre_def_list
         : pre_def_list pre_def_item
             {
-                    $$ = NULL;
+            $$ = $1;
+            if ($2) {
+                program_append((Program_Ast *)$$, $2);
+            }
             }
         | /* empty */
             {
-                    $$ = NULL;
+            $$ = make_program_ast(yylineno);
             }
         ;
 
@@ -162,7 +243,7 @@ pre_def_item
             }
         | function_decl
             {
-                    $$ = NULL;
+            $$ = $1;
             }
         ;
 
@@ -234,6 +315,7 @@ function_decl
           if (!register_function($2.lexeme, current_func_return_type, $4, 0, $2.line)) {
               YYERROR;
           }
+          $$ = make_procedure_ast($2.lexeme, current_func_return_type, $4, 0, NULL, $2.line);
           clear_local_scope();
       }
     | named_type IDENTIFIER '(' ')' ';'
@@ -242,6 +324,7 @@ function_decl
           if (!register_function($2.lexeme, current_func_return_type, NULL, 0, $2.line)) {
               YYERROR;
           }
+          $$ = make_procedure_ast($2.lexeme, current_func_return_type, NULL, 0, NULL, $2.line);
           clear_local_scope();
       }
     ;
@@ -260,7 +343,7 @@ function_def
       '}'
       {
           Ast *body = $8 ? $8 : make_sequence_ast($2.line);
-          $$ = make_procedure_ast($2.lexeme, current_func_return_type, NULL, body, $2.line);
+          $$ = make_procedure_ast($2.lexeme, current_func_return_type, NULL, 1, body, $2.line);
           set_scope(GLOBAL_SCOPE);
           clear_local_scope();
       }
@@ -277,7 +360,7 @@ function_def
       '}'
       {
           Ast *body = $9 ? $9 : make_sequence_ast($2.line);
-          $$ = make_procedure_ast($2.lexeme, current_func_return_type, $4, body, $2.line);
+          $$ = make_procedure_ast($2.lexeme, current_func_return_type, $4, 1, body, $2.line);
           set_scope(GLOBAL_SCOPE);
           clear_local_scope();
       }

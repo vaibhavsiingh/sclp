@@ -196,6 +196,7 @@ typedef struct
     char *name;
     Data_Type return_type;
     Ast_List *params;
+    int has_body;
     Ast *body;
 } Procedure_Ast;
 
@@ -222,7 +223,7 @@ Ast *make_read_ast(Ast *var, int line);
 Ast *make_print_ast(Ast *expr, int line);
 Ast *make_sequence_ast(int line);
 void sequence_append(Sequence_Ast *seq, Ast *stmt);
-Ast *make_procedure_ast(char *name, Data_Type return_type, Ast_List *params, Ast *body, int line);
+Ast *make_procedure_ast(char *name, Data_Type return_type, Ast_List *params, int has_body, Ast *body, int line);
 Ast *make_program_ast(int line);
 void program_append(Program_Ast *prog, Ast *proc);
 

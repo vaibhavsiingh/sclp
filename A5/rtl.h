@@ -8,11 +8,13 @@ typedef enum
 {
     RTL_LABEL,
     RTL_OP0,
+    RTL_OP1,
     RTL_OP2,
     RTL_OP3,
     RTL_OP2_COMMA,
+    RTL_CALL,
     RTL_GOTO,
-    RTL_BGTZ    
+    RTL_BGTZ
 } Rtl_Kind;
 
 typedef struct Rtl Rtl;
@@ -48,6 +50,13 @@ typedef struct
 {
     Rtl base;
     char *op;
+    char *src;
+} Rtl_Op1;
+
+typedef struct
+{
+    Rtl base;
+    char *op;
     char *dst;
     char *src;
     char *comment;
@@ -74,6 +83,13 @@ typedef struct
 typedef struct
 {
     Rtl base;
+    char *dst;
+    char *name;
+} Rtl_Call;
+
+typedef struct
+{
+    Rtl base;
     char *label;
 } Rtl_Goto;
 
@@ -84,17 +100,17 @@ typedef struct
     char *label;
 } Rtl_Bgtz;
 
-
-
 Rtl_Seq *rtl_seq_create(void);
 void rtl_seq_append(Rtl_Seq *seq, Rtl *instr);
 void rtl_seq_print(const Rtl_Seq *seq, FILE *out);
 
 Rtl *rtl_make_label(const char *label);
 Rtl *rtl_make_op0(const char *op);
+Rtl *rtl_make_op1(const char *op, const char *src);
 Rtl *rtl_make_op2(const char *op, const char *dst, const char *src, const char *comment);
 Rtl *rtl_make_op3(const char *op, const char *dst, const char *src1, const char *src2, const char *comment);
 Rtl *rtl_make_op2_comma(const char *op, const char *src1, const char *src2);
+Rtl *rtl_make_call(const char *dst, const char *name);
 Rtl *rtl_make_goto(const char *label);
 Rtl *rtl_make_bgtz(const char *reg, const char *label);
 

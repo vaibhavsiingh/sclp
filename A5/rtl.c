@@ -28,6 +28,17 @@ static void *checked_malloc(size_t size)
     return ptr;
 }
 
+static void *checked_realloc(void *ptr, size_t size)
+{
+    void *new_ptr = realloc(ptr, size);
+    if (!new_ptr)
+    {
+        fprintf(stderr, "Out of memory in RTL generator\n");
+        exit(1);
+    }
+    return new_ptr;
+}
+
 static char *xstrdup(const char *s)
 {
     size_t n;
@@ -187,6 +198,15 @@ static void rtl_print_op0(Rtl *rtl, FILE *out)
     fprintf(out, "    %s\n", ins->op);
 }
 
+static void rtl_print_op1(Rtl *rtl, FILE *out)
+{
+    Rtl_Op1 *ins = (Rtl_Op1 *)rtl;
+    char op_buf[32];
+
+    snprintf(op_buf, sizeof(op_buf), "%s:", ins->op ? ins->op : "");
+    fprintf(out, "    %-7s %s\n", op_buf, ins->src ? ins->src : "");
+}
+
 static void rtl_print_op2(Rtl *rtl, FILE *out)
 {
     Rtl_Op2 *ins = (Rtl_Op2 *)rtl;
@@ -213,6 +233,15 @@ static void rtl_print_op2_comma(Rtl *rtl, FILE *out)
 {
     Rtl_Op2Comma *ins = (Rtl_Op2Comma *)rtl;
     fprintf(out, "    %s:    %s, %s\n", ins->op, ins->src1, ins->src2);
+}
+
+static void rtl_print_call(Rtl *rtl, FILE *out)
+{
+    Rtl_Call *ins = (Rtl_Call *)rtl;
+    if (ins->dst && *ins->dst)
+        fprintf(out, "    %s = call %s\n", ins->dst, ins->name ? ins->name : "");
+    else
+        fprintf(out, "    call %s\n", ins->name ? ins->name : "");
 }
 
 static void rtl_print_goto(Rtl *rtl, FILE *out)
@@ -285,6 +314,14 @@ Rtl *rtl_make_op0(const char *op)
     return (Rtl *)ins;
 }
 
+Rtl *rtl_make_op1(const char *op, const char *src)
+{
+    Rtl_Op1 *ins = (Rtl_Op1 *)rtl_alloc(sizeof(Rtl_Op1), RTL_OP1, rtl_print_op1);
+    ins->op = xstrdup(op);
+    ins->src = xstrdup(src ? src : "");
+    return (Rtl *)ins;
+}
+
 Rtl *rtl_make_op2(const char *op, const char *dst, const char *src, const char *comment)
 {
     Rtl_Op2 *ins = (Rtl_Op2 *)rtl_alloc(sizeof(Rtl_Op2), RTL_OP2, rtl_print_op2);
@@ -312,6 +349,14 @@ Rtl *rtl_make_op2_comma(const char *op, const char *src1, const char *src2)
     ins->op = xstrdup(op);
     ins->src1 = xstrdup(src1);
     ins->src2 = xstrdup(src2);
+    return (Rtl *)ins;
+}
+
+Rtl *rtl_make_call(const char *dst, const char *name)
+{
+    Rtl_Call *ins = (Rtl_Call *)rtl_alloc(sizeof(Rtl_Call), RTL_CALL, rtl_print_call);
+    ins->dst = dst ? xstrdup(dst) : NULL;
+    ins->name = xstrdup(name ? name : "");
     return (Rtl *)ins;
 }
 
@@ -343,6 +388,13 @@ static void rtl_free(Rtl *rtl)
     case RTL_OP0:
         free(((Rtl_Op0 *)rtl)->op);
         break;
+    case RTL_OP1:
+    {
+        Rtl_Op1 *ins = (Rtl_Op1 *)rtl;
+        free(ins->op);
+        free(ins->src);
+        break;
+    }
     case RTL_OP2:
     {
         Rtl_Op2 *ins = (Rtl_Op2 *)rtl;
@@ -368,6 +420,13 @@ static void rtl_free(Rtl *rtl)
         free(ins->op);
         free(ins->src1);
         free(ins->src2);
+        break;
+    }
+    case RTL_CALL:
+    {
+        Rtl_Call *ins = (Rtl_Call *)rtl;
+        free(ins->dst);
+        free(ins->name);
         break;
     }
     case RTL_GOTO:
@@ -601,6 +660,30 @@ static const char *assign_temp_reg(RtlState *state, const char *name, Data_Type 
     return node->reg;
 }
 
+static const char *assign_temp_reg_fixed(RtlState *state, const char *name, Data_Type type, const char *reg)
+{
+    TempRegMap *node;
+
+    if (!state || !name || !reg)
+        return assign_temp_reg(state, name, type, NULL, NULL, NULL);
+
+    if (lookup_temp_reg(state, name))
+        return lookup_temp_reg(state, name);
+
+    if (!reg_in_use(state, reg))
+    {
+        node = (TempRegMap *)checked_malloc(sizeof(TempRegMap));
+        snprintf(node->name, sizeof(node->name), "%s", name);
+        snprintf(node->reg, sizeof(node->reg), "%s", reg);
+        node->type = reg_type_for(type);
+        node->next = state->head;
+        state->head = node;
+        return node->reg;
+    }
+
+    return assign_temp_reg(state, name, type, reg, NULL, NULL);
+}
+
 static void clear_all_temp_regs(RtlState *state)
 {
     TempRegMap *cur;
@@ -653,6 +736,107 @@ static void release_temp_if_used(RtlState *state, const char *name)
     remove_temp_reg(state, name);
 }
 
+static Data_Type lookup_symbol_type_safe(const char *name);
+
+static Data_Type infer_call_dest_type(const char *dest)
+{
+    if (!dest || !*dest)
+        return VOID_TYPE;
+
+    if (is_temp_name(dest) || is_saved_temp_name(dest))
+        return get_operand_type((char *)dest);
+
+    return lookup_symbol_type_safe(dest);
+}
+
+static char **split_call_args(const char *args, int *out_count)
+{
+    char *buf;
+    char *start;
+    char *p;
+    int in_string = 0;
+    int escape = 0;
+    int count = 0;
+    int cap = 0;
+    char **items = NULL;
+
+    if (out_count)
+        *out_count = 0;
+
+    if (!args || !*args)
+        return NULL;
+
+    buf = xstrdup(args);
+    start = buf;
+    for (p = buf;; p++)
+    {
+        char ch = *p;
+        if (ch == '\0')
+        {
+            char *token = start;
+            trim(token);
+            if (*token)
+            {
+                if (count == cap)
+                {
+                    cap = cap ? cap * 2 : 4;
+                    items = (char **)checked_realloc(items, sizeof(*items) * (size_t)cap);
+                }
+                items[count++] = xstrdup(token);
+            }
+            break;
+        }
+
+        if (escape)
+        {
+            escape = 0;
+            continue;
+        }
+
+        if (in_string && ch == '\\')
+        {
+            escape = 1;
+            continue;
+        }
+
+        if (ch == '"')
+        {
+            in_string = !in_string;
+            continue;
+        }
+
+        if (!in_string && ch == ',')
+        {
+            *p = '\0';
+            trim(start);
+            if (*start)
+            {
+                if (count == cap)
+                {
+                    cap = cap ? cap * 2 : 4;
+                    items = (char **)checked_realloc(items, sizeof(*items) * (size_t)cap);
+                }
+                items[count++] = xstrdup(start);
+            }
+            start = p + 1;
+        }
+    }
+
+    free(buf);
+    if (out_count)
+        *out_count = count;
+    return items;
+}
+
+static void free_call_args(char **args, int argc)
+{
+    if (!args)
+        return;
+    for (int i = 0; i < argc; i++)
+        free(args[i]);
+    free(args);
+}
+
 static Data_Type lookup_symbol_type_safe(const char *name)
 {
     Symbol_Table_Entry *entry;
@@ -663,18 +847,15 @@ static Data_Type lookup_symbol_type_safe(const char *name)
     if (is_saved_temp_name(name))
         return get_operand_type((char *)name);
 
-    entry = lookup_symbol((char *)name);
+    entry = lookup_symbol_any_scope(name);
     if (!entry)
-    {
-        printf("Symbol table entry not found of %s in lookup_symbol_type_safe\n", name);
         return INT_TYPE;
-    }
     return entry->type;
 }
 
 static Data_Type infer_operand_type(const char *operand, RtlState *state)
 {
-    printf("%s\n", operand);
+    // printf("%s\n", operand);
     if (!operand)
         return INT_TYPE;
     if (is_integer_literal(operand))
@@ -687,8 +868,6 @@ static Data_Type infer_operand_type(const char *operand, RtlState *state)
         return lookup_temp_type(state, operand);
     if (is_saved_temp_name(operand))
         return get_operand_type((char *)operand);
-
-    return lookup_symbol_type_safe(operand);
 }
 
 static void emit_load_operand(const char *reg, const char *operand, Rtl_Seq *out)
@@ -884,7 +1063,7 @@ static void emit_copy_assign(const char *dst, const char *rhs, RtlState *state, 
 {
     Data_Type rhs_type = infer_operand_type(rhs, state);
     Data_Type dst_type = infer_operand_type(dst, state);
-    printf("%d", (int)rhs_type);
+    // printf("%d", (int)rhs_type);
     const char *rhs_reg = emit_operand_reg(rhs, rhs_type, state, out, NULL, NULL, NULL);
 
     if (is_temp_name(dst))
@@ -1018,6 +1197,89 @@ static void emit_if_goto(const char *cond, const char *label, RtlState *state, R
     release_temp_if_used(state, cond);
 }
 
+static void emit_call(const char *dest, const char *name, const char *args, RtlState *state, Rtl_Seq *out)
+{
+    int argc = 0;
+    char **argv = split_call_args(args, &argc);
+    char callee[256];
+    const char *call_ret_reg = "v1";
+    Data_Type ret_type = infer_call_dest_type(dest);
+
+    for (int i = 0; i < argc; i++)
+    {
+        const char *arg = argv[i];
+        Data_Type arg_type = infer_operand_type(arg, state);
+        const char *arg_reg = emit_operand_reg(arg, arg_type, state, out, NULL, NULL, NULL);
+        rtl_seq_append(out, rtl_make_op1("push", arg_reg));
+        release_temp_if_used(state, arg);
+    }
+
+    if (ret_type == FLOAT_TYPE)
+        call_ret_reg = "f0";
+
+    if (name && *name)
+        snprintf(callee, sizeof(callee), "%s_", name);
+    else
+        snprintf(callee, sizeof(callee), "_");
+
+    rtl_seq_append(out, rtl_make_call(call_ret_reg, callee));
+    if (argc > 0)
+        rtl_seq_append(out, rtl_make_op0("pop:"));
+
+    if (dest && *dest)
+    {
+        if (is_temp_name(dest))
+        {
+            const char *dst_reg = NULL;
+            if (ret_type != FLOAT_TYPE && !reg_in_use(state, "v0"))
+                dst_reg = assign_temp_reg_fixed(state, dest, ret_type, "v0");
+            else
+                dst_reg = assign_temp_reg(state, dest, ret_type, call_ret_reg, NULL, NULL);
+
+            if (strcmp(dst_reg, call_ret_reg) != 0)
+                emit_move_value(dst_reg, call_ret_reg, out);
+        }
+        else
+        {
+            emit_store_symbol(dest, call_ret_reg, out);
+            clear_all_temp_regs(state);
+        }
+    }
+
+    free_call_args(argv, argc);
+}
+
+static void emit_return(const char *value, RtlState *state, Rtl_Seq *out)
+{
+    if (!value || !*value)
+    {
+        rtl_seq_append(out, rtl_make_op0("return"));
+        clear_all_temp_regs(state);
+        return;
+    }
+
+    Data_Type val_type = infer_operand_type(value, state);
+    const char *ret_reg = (val_type == FLOAT_TYPE) ? "f0" : "v1";
+    const char *mapped = NULL;
+
+    if (is_temp_name(value))
+        mapped = lookup_temp_reg(state, value);
+
+    if (mapped)
+    {
+        if (strcmp(mapped, ret_reg) != 0)
+            emit_move_value(ret_reg, mapped, out);
+    }
+    else
+    {
+        emit_load_operand(ret_reg, value, out);
+    }
+
+    rtl_seq_append(out, rtl_make_op1("return", ret_reg));
+    release_temp_if_used(state, value);
+    clear_all_temp_regs(state);
+}
+
 static void ensure_tac(Ast *root)
 {
     FILE *fp;
@@ -1033,6 +1295,79 @@ static void ensure_tac(Ast *root)
 
     tac_generate(root, fp);
     fclose(fp);
+}
+
+static void emit_tac_instr(const Tac *cur, RtlState *state, Rtl_Seq *out)
+{
+    if (!cur || !state || !out)
+        return;
+
+    switch (cur->kind)
+    {
+    case TAC_LABEL:
+    {
+        const Tac_Label *ins = (const Tac_Label *)cur;
+        rtl_seq_append(out, rtl_make_label(ins->label));
+        break;
+    }
+    case TAC_GOTO:
+    {
+        const Tac_Goto *ins = (const Tac_Goto *)cur;
+        rtl_seq_append(out, rtl_make_goto(ins->label));
+        break;
+    }
+    case TAC_IF_GOTO:
+    {
+        const Tac_If_Goto *ins = (const Tac_If_Goto *)cur;
+        emit_if_goto(ins->cond, ins->label, state, out);
+        break;
+    }
+    case TAC_READ:
+    {
+        const Tac_Read *ins = (const Tac_Read *)cur;
+        emit_read(ins->target, state, out);
+        break;
+    }
+    case TAC_PRINT:
+    {
+        const Tac_Print *ins = (const Tac_Print *)cur;
+        emit_print(ins->value, state, out);
+        release_temp_if_used(state, ins->value);
+        break;
+    }
+    case TAC_CALL:
+    {
+        const Tac_Call *ins = (const Tac_Call *)cur;
+        emit_call(ins->dest, ins->name, ins->args, state, out);
+        break;
+    }
+    case TAC_ASSIGN:
+    {
+        const Tac_Assign *ins = (const Tac_Assign *)cur;
+        emit_copy_assign(ins->dest, ins->src, state, out);
+        break;
+    }
+    case TAC_UNARY:
+    {
+        const Tac_Unary *ins = (const Tac_Unary *)cur;
+        emit_unary_assign(ins->dest, ins->op, ins->operand, state, out);
+        break;
+    }
+    case TAC_BINARY:
+    {
+        const Tac_Binary *ins = (const Tac_Binary *)cur;
+        emit_binary_assign(ins->dest, ins->lhs, ins->op, ins->rhs, state, out);
+        break;
+    }
+    case TAC_RETURN:
+    {
+        const Tac_Return *ins = (const Tac_Return *)cur;
+        emit_return(ins->value, state, out);
+        break;
+    }
+    default:
+        break;
+    }
 }
 
 static void emit_tac_seq(const Tac_Seq *seq, RtlState *state, Rtl_Seq *out)
@@ -1059,60 +1394,8 @@ static void emit_tac_seq(const Tac_Seq *seq, RtlState *state, Rtl_Seq *out)
             tac_set_current_proc(NULL);
             clear_all_temp_regs(state);
             break;
-        case TAC_LABEL:
-        {
-            const Tac_Label *ins = (const Tac_Label *)cur;
-            rtl_seq_append(out, rtl_make_label(ins->label));
-            break;
-        }
-        case TAC_GOTO:
-        {
-            const Tac_Goto *ins = (const Tac_Goto *)cur;
-            rtl_seq_append(out, rtl_make_goto(ins->label));
-            break;
-        }
-        case TAC_IF_GOTO:
-        {
-            const Tac_If_Goto *ins = (const Tac_If_Goto *)cur;
-            emit_if_goto(ins->cond, ins->label, state, out);
-            break;
-        }
-        case TAC_READ:
-        {
-            const Tac_Read *ins = (const Tac_Read *)cur;
-            emit_read(ins->target, state, out);
-            break;
-        }
-        case TAC_PRINT:
-        {
-            const Tac_Print *ins = (const Tac_Print *)cur;
-            emit_print(ins->value, state, out);
-            release_temp_if_used(state, ins->value);
-            break;
-        }
-        case TAC_ASSIGN:
-        {
-            const Tac_Assign *ins = (const Tac_Assign *)cur;
-            emit_copy_assign(ins->dest, ins->src, state, out);
-            break;
-        }
-        case TAC_UNARY:
-        {
-            const Tac_Unary *ins = (const Tac_Unary *)cur;
-            emit_unary_assign(ins->dest, ins->op, ins->operand, state, out);
-            break;
-        }
-        case TAC_BINARY:
-        {
-            const Tac_Binary *ins = (const Tac_Binary *)cur;
-            emit_binary_assign(ins->dest, ins->lhs, ins->op, ins->rhs, state, out);
-            break;
-        }
-        case TAC_RETURN:
-            rtl_seq_append(out, rtl_make_op0("return"));
-            clear_all_temp_regs(state);
-            break;
         default:
+            emit_tac_instr(cur, state, out);
             break;
         }
     }
@@ -1156,34 +1439,90 @@ void rtl_reset_counters(void)
 
 void rtl_generate(Ast *root, FILE *out)
 {
+    const Tac *cur;
+    RtlState state = {NULL, "", 0};
+    Rtl_Seq *seq = NULL;
     char procedure_name[128] = "";
-    Rtl_Seq *seq;
+    int printed_any = 0;
 
-    if (!out)
+    if (!out || !root)
         return;
 
     rtl_reset_counters();
-    seq = tac_to_rtl_seq(root, procedure_name, sizeof(procedure_name));
-
-    if (!seq || !seq->head)
-    {
-        if (seq)
-            rtl_seq_free(seq);
+    ensure_tac(root);
+    if (!root->tac_code)
         return;
-    }
 
-    if (procedure_name[0] != '\0')
+    for (cur = root->tac_code->head; cur; cur = cur->next)
     {
-        fputs("**PROCEDURE: ", out);
-        fputs(procedure_name, out);
-        fputs("\n", out);
+        if (cur->kind == TAC_PROC_BEGIN)
+        {
+            const Tac_Proc *ins = (const Tac_Proc *)cur;
+            if (seq)
+            {
+                rtl_seq_free(seq);
+                seq = NULL;
+            }
+            clear_all_temp_regs(&state);
+            tac_set_current_proc(ins->name ? ins->name : "<anon>");
+            snprintf(procedure_name, sizeof(procedure_name), "%s", ins->name ? ins->name : "");
+            seq = rtl_seq_create();
+            continue;
+        }
+
+        if (cur->kind == TAC_PROC_END)
+        {
+            if (seq && seq->head)
+            {
+                if (printed_any)
+                    fputc('\n', out);
+                if (procedure_name[0] != '\0')
+                {
+                    fputs("**PROCEDURE: ", out);
+                    fputs(procedure_name, out);
+                    fputs("\n", out);
+                }
+                fputs("**BEGIN: RTL Statements\n", out);
+                rtl_seq_print(seq, out);
+                fputs("**END: RTL Statements\n", out);
+                printed_any = 1;
+            }
+
+            if (seq)
+            {
+                rtl_seq_free(seq);
+                seq = NULL;
+            }
+            procedure_name[0] = '\0';
+            tac_set_current_proc(NULL);
+            clear_all_temp_regs(&state);
+            continue;
+        }
+
+        if (!seq)
+            seq = rtl_seq_create();
+
+        emit_tac_instr(cur, &state, seq);
     }
 
-    fputs("**BEGIN: RTL Statements\n", out);
-    rtl_seq_print(seq, out);
-    fputs("**END: RTL Statements\n", out);
+    if (seq && seq->head)
+    {
+        if (printed_any)
+            fputc('\n', out);
+        if (procedure_name[0] != '\0')
+        {
+            fputs("**PROCEDURE: ", out);
+            fputs(procedure_name, out);
+            fputs("\n", out);
+        }
+        fputs("**BEGIN: RTL Statements\n", out);
+        rtl_seq_print(seq, out);
+        fputs("**END: RTL Statements\n", out);
+    }
 
-    rtl_seq_free(seq);
+    if (seq)
+        rtl_seq_free(seq);
+    clear_all_temp_regs(&state);
 }
 
 int rtl_generate_to_path(Ast *root, const char *path)

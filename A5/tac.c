@@ -1239,6 +1239,9 @@ static void emit_procedure_code(Tac_Seq *code, Procedure_Ast *pr, int add_blank)
     if (!code || !pr)
         return;
 
+    if (!pr->has_body || !pr->body)
+        return;
+
     if (pr->return_type == VOID_TYPE && is_empty_sequence(pr->body))
         return;
 

@@ -256,7 +256,7 @@ Ast *make_return_ast(Ast *expr, int line)
     init_ast_base(&node->base, AST_RETURN, line, check_return_ast, print_return_ast);
 
     node->expr = expr;
-    
+
     return (Ast *)node;
 }
 
@@ -331,7 +331,7 @@ void sequence_append(Sequence_Ast *seq, Ast *stmt)
 /* Procedure                                                    */
 /* ------------------------------------------------------------ */
 
-Ast *make_procedure_ast(char *name, Data_Type return_type, Ast_List *params, Ast *body, int line)
+Ast *make_procedure_ast(char *name, Data_Type return_type, Ast_List *params, int has_body, Ast *body, int line)
 {
     Procedure_Ast *node = checked_malloc(sizeof(Procedure_Ast));
 
@@ -340,6 +340,7 @@ Ast *make_procedure_ast(char *name, Data_Type return_type, Ast_List *params, Ast
     node->name = strdup(name);
     node->return_type = return_type;
     node->params = params;
+    node->has_body = has_body;
     node->body = body;
 
     return (Ast *)node;
@@ -734,11 +735,6 @@ static int check_procedure_ast(Ast *ast)
     Procedure_Ast *node = (Procedure_Ast *)ast;
     int ok = 1;
 
-    Data_Type saved_type = current_return_type;
-    int saved_in_function = in_function;
-    current_return_type = node->return_type;
-    in_function = 1;
-
     Ast_List *param = node->params;
     while (param)
     {
@@ -746,6 +742,20 @@ static int check_procedure_ast(Ast *ast)
             ok = 0;
         param = param->next;
     }
+
+    if (!node->has_body)
+    {
+        ast->data_type = VOID_TYPE;
+        return ok;
+    }
+
+    if (!node->body)
+        return type_error(ast->lineno, "function definition missing body");
+
+    Data_Type saved_type = current_return_type;
+    int saved_in_function = in_function;
+    current_return_type = node->return_type;
+    in_function = 1;
 
     if (!check_ast(node->body))
         ok = 0;

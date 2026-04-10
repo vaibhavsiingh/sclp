@@ -107,6 +107,40 @@ Symbol_Table_Entry *lookup_symbol(char *name)
     return NULL;
 }
 
+Symbol_Table_Entry *lookup_symbol_any_scope(const char *name)
+{
+    Symbol_Table_Entry *entry;
+
+    if (!name)
+        return NULL;
+
+    entry = local_table;
+    while (entry)
+    {
+        if (strcmp(entry->name, name) == 0)
+            return entry;
+        entry = entry->next;
+    }
+
+    entry = global_table;
+    while (entry)
+    {
+        if (strcmp(entry->name, name) == 0)
+            return entry;
+        entry = entry->next;
+    }
+
+    entry = archived_locals;
+    while (entry)
+    {
+        if (strcmp(entry->name, name) == 0)
+            return entry;
+        entry = entry->next;
+    }
+
+    return NULL;
+}
+
 /* -------- Insert -------- */
 
 Symbol_Table_Entry *insert_symbol(char *name, Data_Type type)
