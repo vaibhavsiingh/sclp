@@ -1,6 +1,6 @@
 int m;
 
-int f(int n){
+int f(int n, int m){
     int ret, k;
 
     if(n == 0){
@@ -12,7 +12,7 @@ int f(int n){
     }
 
     k = n - 1;
-    ret = f(k);
+    ret = f(k, k);
     ret = n * ret;
 
     return ret;
@@ -23,7 +23,7 @@ void main(){
     int b;
 
     b = 5;
-    a = f(b);
+    a = f(b, b);
     print a;
 
     m = 2;

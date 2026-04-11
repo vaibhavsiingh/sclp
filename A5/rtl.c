@@ -749,6 +749,20 @@ static Data_Type infer_call_dest_type(const char *dest)
     return lookup_symbol_type_safe(dest);
 }
 
+static Data_Type lookup_current_procedure_return_type(const RtlState *state)
+{
+    Function_Entry *entry;
+
+    if (!state || !state->has_procedure_name || !state->procedure_name[0])
+        return VOID_TYPE;
+
+    entry = lookup_function(state->procedure_name);
+    if (!entry)
+        return VOID_TYPE;
+
+    return entry->return_type;
+}
+
 static char **split_call_args(const char *args, int *out_count)
 {
     char *buf;
@@ -868,6 +882,8 @@ static Data_Type infer_operand_type(const char *operand, RtlState *state)
         return lookup_temp_type(state, operand);
     if (is_saved_temp_name(operand))
         return get_operand_type((char *)operand);
+
+    return lookup_symbol_type_safe(operand);
 }
 
 static void emit_load_operand(const char *reg, const char *operand, Rtl_Seq *out)
@@ -1203,9 +1219,10 @@ static void emit_call(const char *dest, const char *name, const char *args, RtlS
     char **argv = split_call_args(args, &argc);
     char callee[256];
     const char *call_ret_reg = "v1";
+    const char *call_dst = NULL;
     Data_Type ret_type = infer_call_dest_type(dest);
 
-    for (int i = 0; i < argc; i++)
+    for (int i = argc - 1; i >= 0; i--)
     {
         const char *arg = argv[i];
         Data_Type arg_type = infer_operand_type(arg, state);
@@ -1217,14 +1234,17 @@ static void emit_call(const char *dest, const char *name, const char *args, RtlS
     if (ret_type == FLOAT_TYPE)
         call_ret_reg = "f0";
 
+    if (ret_type != VOID_TYPE)
+        call_dst = call_ret_reg;
+
     if (name && *name)
         snprintf(callee, sizeof(callee), "%s_", name);
     else
         snprintf(callee, sizeof(callee), "_");
 
-    rtl_seq_append(out, rtl_make_call(call_ret_reg, callee));
-    if (argc > 0)
-        rtl_seq_append(out, rtl_make_op0("pop:"));
+    rtl_seq_append(out, rtl_make_call(call_dst, callee));
+    for (int i = 0; i < argc; i++)
+        rtl_seq_append(out, rtl_make_op0("pop"));
 
     if (dest && *dest)
     {
@@ -1258,8 +1278,9 @@ static void emit_return(const char *value, RtlState *state, Rtl_Seq *out)
         return;
     }
 
+    Data_Type declared_ret_type = lookup_current_procedure_return_type(state);
     Data_Type val_type = infer_operand_type(value, state);
-    const char *ret_reg = (val_type == FLOAT_TYPE) ? "f0" : "v1";
+    const char *ret_reg = ((declared_ret_type == FLOAT_TYPE) || (declared_ret_type == VOID_TYPE && val_type == FLOAT_TYPE)) ? "f0" : "v1";
     const char *mapped = NULL;
 
     if (is_temp_name(value))
@@ -1437,13 +1458,30 @@ void rtl_reset_counters(void)
     free_string_map();
 }
 
+typedef struct
+{
+    char *name;
+    Rtl_Seq *seq;
+} Proc_Rtl_Block;
+
+static int compare_proc_rtl_blocks(const void *a, const void *b)
+{
+    const Proc_Rtl_Block *pa = (const Proc_Rtl_Block *)a;
+    const Proc_Rtl_Block *pb = (const Proc_Rtl_Block *)b;
+    const char *na = (pa && pa->name) ? pa->name : "";
+    const char *nb = (pb && pb->name) ? pb->name : "";
+    return strcmp(na, nb);
+}
+
 void rtl_generate(Ast *root, FILE *out)
 {
     const Tac *cur;
     RtlState state = {NULL, "", 0};
     Rtl_Seq *seq = NULL;
     char procedure_name[128] = "";
-    int printed_any = 0;
+    Proc_Rtl_Block *blocks = NULL;
+    int block_count = 0;
+    int block_cap = 0;
 
     if (!out || !root)
         return;
@@ -1465,6 +1503,8 @@ void rtl_generate(Ast *root, FILE *out)
             }
             clear_all_temp_regs(&state);
             tac_set_current_proc(ins->name ? ins->name : "<anon>");
+            snprintf(state.procedure_name, sizeof(state.procedure_name), "%s", ins->name ? ins->name : "");
+            state.has_procedure_name = 1;
             snprintf(procedure_name, sizeof(procedure_name), "%s", ins->name ? ins->name : "");
             seq = rtl_seq_create();
             continue;
@@ -1474,18 +1514,16 @@ void rtl_generate(Ast *root, FILE *out)
         {
             if (seq && seq->head)
             {
-                if (printed_any)
-                    fputc('\n', out);
-                if (procedure_name[0] != '\0')
+                if (block_count == block_cap)
                 {
-                    fputs("**PROCEDURE: ", out);
-                    fputs(procedure_name, out);
-                    fputs("\n", out);
+                    int new_cap = block_cap ? block_cap * 2 : 4;
+                    blocks = (Proc_Rtl_Block *)checked_realloc(blocks, sizeof(*blocks) * (size_t)new_cap);
+                    block_cap = new_cap;
                 }
-                fputs("**BEGIN: RTL Statements\n", out);
-                rtl_seq_print(seq, out);
-                fputs("**END: RTL Statements\n", out);
-                printed_any = 1;
+                blocks[block_count].name = xstrdup(procedure_name);
+                blocks[block_count].seq = seq;
+                block_count++;
+                seq = NULL;
             }
 
             if (seq)
@@ -1495,6 +1533,8 @@ void rtl_generate(Ast *root, FILE *out)
             }
             procedure_name[0] = '\0';
             tac_set_current_proc(NULL);
+            state.procedure_name[0] = '\0';
+            state.has_procedure_name = 0;
             clear_all_temp_regs(&state);
             continue;
         }
@@ -1507,21 +1547,46 @@ void rtl_generate(Ast *root, FILE *out)
 
     if (seq && seq->head)
     {
-        if (printed_any)
-            fputc('\n', out);
-        if (procedure_name[0] != '\0')
+        if (block_count == block_cap)
         {
-            fputs("**PROCEDURE: ", out);
-            fputs(procedure_name, out);
-            fputs("\n", out);
+            int new_cap = block_cap ? block_cap * 2 : 4;
+            blocks = (Proc_Rtl_Block *)checked_realloc(blocks, sizeof(*blocks) * (size_t)new_cap);
+            block_cap = new_cap;
         }
-        fputs("**BEGIN: RTL Statements\n", out);
-        rtl_seq_print(seq, out);
-        fputs("**END: RTL Statements\n", out);
+        blocks[block_count].name = xstrdup(procedure_name);
+        blocks[block_count].seq = seq;
+        block_count++;
+        seq = NULL;
     }
 
     if (seq)
         rtl_seq_free(seq);
+
+    if (block_count > 1)
+        qsort(blocks, (size_t)block_count, sizeof(*blocks), compare_proc_rtl_blocks);
+
+    for (int i = 0; i < block_count; i++)
+    {
+        if (i > 0)
+            fputc('\n', out);
+        if (blocks[i].name && blocks[i].name[0] != '\0')
+        {
+            fputs("**PROCEDURE: ", out);
+            fputs(blocks[i].name, out);
+            fputs("\n", out);
+        }
+        fputs("**BEGIN: RTL Statements\n", out);
+        rtl_seq_print(blocks[i].seq, out);
+        fputs("**END: RTL Statements\n", out);
+    }
+
+    for (int i = 0; i < block_count; i++)
+    {
+        free(blocks[i].name);
+        rtl_seq_free(blocks[i].seq);
+    }
+    free(blocks);
+
     clear_all_temp_regs(&state);
 }
 
