@@ -736,8 +736,6 @@ static void release_temp_if_used(RtlState *state, const char *name)
     remove_temp_reg(state, name);
 }
 
-static Data_Type lookup_symbol_type_safe(const char *name);
-
 static Data_Type infer_call_dest_type(const char *dest)
 {
     if (!dest || !*dest)
@@ -851,7 +849,7 @@ static void free_call_args(char **args, int argc)
     free(args);
 }
 
-static Data_Type lookup_symbol_type_safe(const char *name)
+Data_Type lookup_symbol_type_safe(const char *name)
 {
     Symbol_Table_Entry *entry;
 
@@ -1422,6 +1420,7 @@ static void emit_tac_seq(const Tac_Seq *seq, RtlState *state, Rtl_Seq *out)
     }
 }
 
+// never used any where, so likhne ji jaroorat nhi h filhal toh
 static Rtl_Seq *tac_to_rtl_seq(Ast *root, char *procedure_name, size_t procedure_name_size)
 {
     Rtl_Seq *seq;
@@ -1458,22 +1457,7 @@ void rtl_reset_counters(void)
     free_string_map();
 }
 
-typedef struct
-{
-    char *name;
-    Rtl_Seq *seq;
-} Proc_Rtl_Block;
-
-static int compare_proc_rtl_blocks(const void *a, const void *b)
-{
-    const Proc_Rtl_Block *pa = (const Proc_Rtl_Block *)a;
-    const Proc_Rtl_Block *pb = (const Proc_Rtl_Block *)b;
-    const char *na = (pa && pa->name) ? pa->name : "";
-    const char *nb = (pb && pb->name) ? pb->name : "";
-    return strcmp(na, nb);
-}
-
-void rtl_generate(Ast *root, FILE *out)
+Proc_Rtl_Block *rtl_collect_proc_blocks(Ast *root, int *out_count)
 {
     const Tac *cur;
     RtlState state = {NULL, "", 0};
@@ -1483,13 +1467,15 @@ void rtl_generate(Ast *root, FILE *out)
     int block_count = 0;
     int block_cap = 0;
 
-    if (!out || !root)
-        return;
+    if (out_count)
+        *out_count = 0;
 
-    rtl_reset_counters();
+    if (!root)
+        return NULL;
+
     ensure_tac(root);
     if (!root->tac_code)
-        return;
+        return NULL;
 
     for (cur = root->tac_code->head; cur; cur = cur->next)
     {
@@ -1562,8 +1548,41 @@ void rtl_generate(Ast *root, FILE *out)
     if (seq)
         rtl_seq_free(seq);
 
-    if (block_count > 1)
-        qsort(blocks, (size_t)block_count, sizeof(*blocks), compare_proc_rtl_blocks);
+    clear_all_temp_regs(&state);
+
+    if (out_count)
+        *out_count = block_count;
+    return blocks;
+}
+
+void rtl_free_proc_blocks(Proc_Rtl_Block *blocks, int block_count)
+{
+    int i;
+
+    if (!blocks)
+        return;
+
+    for (i = 0; i < block_count; i++)
+    {
+        free(blocks[i].name);
+        rtl_seq_free(blocks[i].seq);
+    }
+
+    free(blocks);
+}
+
+void rtl_generate(Ast *root, FILE *out)
+{
+    Proc_Rtl_Block *blocks = NULL;
+    int block_count = 0;
+
+    if (!out || !root)
+        return;
+
+    rtl_reset_counters();
+    blocks = rtl_collect_proc_blocks(root, &block_count);
+    if (!blocks || block_count == 0)
+        return;
 
     for (int i = 0; i < block_count; i++)
     {
@@ -1580,14 +1599,7 @@ void rtl_generate(Ast *root, FILE *out)
         fputs("**END: RTL Statements\n", out);
     }
 
-    for (int i = 0; i < block_count; i++)
-    {
-        free(blocks[i].name);
-        rtl_seq_free(blocks[i].seq);
-    }
-    free(blocks);
-
-    clear_all_temp_regs(&state);
+    rtl_free_proc_blocks(blocks, block_count);
 }
 
 int rtl_generate_to_path(Ast *root, const char *path)

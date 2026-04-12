@@ -4,10 +4,13 @@
 #include <stdio.h>
 #include "ast.h"
 
-/* Generate SPIM assembly for a checked AST and write it to the provided stream. */
+/* Generate SPIM-style assembly from in-memory RTL for a checked AST. */
 void spim_generate(Ast *root, FILE *out);
 
-/* Convenience wrapper that writes SPIM assembly to a file path. Returns 1 on success. */
+/* Convenience wrapper that writes SPIM-style assembly to a file path. */
 int spim_generate_to_path(Ast *root, const char *path);
+
+/* Reset counters for deterministic output. */
+void spim_reset_counters(void);
 
 #endif

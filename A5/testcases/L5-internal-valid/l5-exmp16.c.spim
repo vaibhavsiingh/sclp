@@ -13,25 +13,22 @@ main:
     sub $sp, $sp, 16
     # Prologue ends
 
-    lw $v0, -4($fp)        # Source: a
-    lw $t1, -8($fp)        # Source: b
-    mul $t0, $v0, $t1      # t0 = a * b
-    sw $t0, c              # c = result
-
-    jal p
-    jal p
-
-    lw $v0, -4($fp)        # a
-    lw $t1, -8($fp)        # b
+    lw $v0, -4($fp)
+    lw $t1, -8($fp)
     mul $t0, $v0, $t1
-    sw $t0, -4($fp)        # a = result
+    sw $t0, c
+    jal p
+    jal p
+    lw $v0, -4($fp)
+    lw $t1, -8($fp)
+    mul $t0, $v0, $t1
+    sw $t0, -4($fp)
 
 epilogue_main:
     add $sp, $sp, 16
     lw $fp, -4($sp)
     lw $ra, 0($sp)
     jr $ra
-
 
 .text
 .globl p
@@ -48,32 +45,25 @@ p:
     slt $t0, $v0, $t1
     xori $v0, $t0, 1
     bgtz $v0, Label1
-
-    # a = a * b
     lw $v0, a
     lw $t1, b
     mul $t0, $v0, $t1
     sw $t0, a
     j Label0
-
 Label1:
     li $v0, 1
     li $t1, 4
     slt $t0, $v0, $t1
     xori $v0, $t0, 1
-    bgtz $v0, Label2
-
-    # c = a * b
+    bgtz $v0, Label3
     lw $v0, a
     lw $t1, b
     mul $t0, $v0, $t1
     sw $t0, c
-
-    # c = a
     lw $v0, a
     sw $v0, c
     j Label2
-
+Label3:
 Label2:
 Label0:
 

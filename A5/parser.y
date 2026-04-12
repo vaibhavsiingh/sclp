@@ -23,6 +23,50 @@ int main_defined = 0;
 Ast *root;
 static Data_Type current_decl_type = INT_TYPE;
 static Data_Type current_func_return_type = INT_TYPE;
+static int collecting_function_locals = 0;
+static int current_function_local_bytes = 0;
+static Ast_List *current_function_locals = NULL;
+
+static void append_ast_list_node(Ast_List **head, Ast *stmt)
+{
+    Ast_List *node;
+    Ast_List *cur;
+
+    if (!head || !stmt)
+        return;
+
+    node = (Ast_List *)malloc(sizeof(Ast_List));
+    if (!node)
+    {
+        yyerror("out of memory while recording locals");
+        return;
+    }
+
+    node->stmt = stmt;
+    node->next = NULL;
+
+    if (!*head)
+    {
+        *head = node;
+        return;
+    }
+
+    cur = *head;
+    while (cur->next)
+        cur = cur->next;
+    cur->next = node;
+}
+
+static int type_size_bytes(Data_Type type)
+{
+    switch (type)
+    {
+    case VOID_TYPE:
+        return 0;
+    default:
+        return 4;
+    }
+}
 
 static int register_function(const char *name, Data_Type ret_type,
                              Ast_List *params_ast, int is_definition, int line)
@@ -164,9 +208,8 @@ static Procedure_Ast *find_matching_decl(Program_Ast *prog, const Procedure_Ast 
 %type <ast> function_call
 %type <ast> call_statement
 %type <ast> program
-%type <ast> function_def_list
-%type <ast> pre_def_list
-%type <ast> pre_def_item
+%type <ast> external_decl_list
+%type <ast> external_decl
 %type <dtype> param_type
 %type <ast> formal_param
 %type <list> formal_param_list
@@ -186,35 +229,9 @@ static Procedure_Ast *find_matching_decl(Program_Ast *prog, const Procedure_Ast 
 %%
 
 program
-        : pre_def_list function_def_list
+        : external_decl_list
             {
-            Program_Ast *prog = (Program_Ast *)$1;
-            Program_Ast *defs = (Program_Ast *)$2;
-            Ast_List *cur = defs ? defs->procedures : NULL;
-
-            if (!prog) {
-                prog = (Program_Ast *)make_program_ast(yylineno);
-            }
-
-            while (cur) {
-                Ast *node = cur->stmt;
-                if (node && node->kind == AST_PROCEDURE) {
-                    Procedure_Ast *def_proc = (Procedure_Ast *)node;
-                    Procedure_Ast *decl_proc = find_matching_decl(prog, def_proc);
-
-                    if (decl_proc) {
-                        decl_proc->has_body = 1;
-                        decl_proc->body = def_proc->body;
-                    } else {
-                        program_append(prog, node);
-                    }
-                } else if (node) {
-                    program_append(prog, node);
-                }
-                cur = cur->next;
-            }
-
-            root = (Ast *)prog;
+            root = $1;
                     if (!sa_parse && !main_defined) {
                             yyerror("main function must be defined");
                             YYERROR;
@@ -222,12 +239,27 @@ program
             }
         ;
 
-pre_def_list
-        : pre_def_list pre_def_item
+external_decl_list
+        : external_decl_list external_decl
             {
             $$ = $1;
             if ($2) {
-                program_append((Program_Ast *)$$, $2);
+                Ast *node = $2;
+                if (node->kind == AST_PROCEDURE && ((Procedure_Ast *)node)->has_body) {
+                    Procedure_Ast *def_proc = (Procedure_Ast *)node;
+                    Procedure_Ast *decl_proc = find_matching_decl((Program_Ast *)$$, def_proc);
+
+                    if (decl_proc) {
+                        decl_proc->has_body = 1;
+                        decl_proc->body = def_proc->body;
+                        decl_proc->local_var_bytes = def_proc->local_var_bytes;
+                        decl_proc->locals = def_proc->locals;
+                    } else {
+                        program_append((Program_Ast *)$$, node);
+                    }
+                } else {
+                    program_append((Program_Ast *)$$, node);
+                }
             }
             }
         | /* empty */
@@ -236,7 +268,7 @@ pre_def_list
             }
         ;
 
-pre_def_item
+external_decl
         : var_decl_stmt
             {
                     $$ = NULL;
@@ -245,22 +277,9 @@ pre_def_item
             {
             $$ = $1;
             }
-        ;
-
-function_def_list
-        : function_def_list function_def
-            {
-                    $$ = $1;
-                    if ($2) {
-                            program_append((Program_Ast *)$$, $2);
-                    }
-            }
         | function_def
             {
-                    $$ = make_program_ast(yylineno);
-                    if ($1) {
-                            program_append((Program_Ast *)$$, $1);
-                    }
+            $$ = $1;
             }
         ;
 
@@ -315,7 +334,7 @@ function_decl
           if (!register_function($2.lexeme, current_func_return_type, $4, 0, $2.line)) {
               YYERROR;
           }
-          $$ = make_procedure_ast($2.lexeme, current_func_return_type, $4, 0, NULL, $2.line);
+          $$ = make_procedure_ast($2.lexeme, current_func_return_type, $4, 0, 0, NULL, $2.line);
           clear_local_scope();
       }
     | named_type IDENTIFIER '(' ')' ';'
@@ -324,7 +343,7 @@ function_decl
           if (!register_function($2.lexeme, current_func_return_type, NULL, 0, $2.line)) {
               YYERROR;
           }
-          $$ = make_procedure_ast($2.lexeme, current_func_return_type, NULL, 0, NULL, $2.line);
+          $$ = make_procedure_ast($2.lexeme, current_func_return_type, NULL, 0, 0, NULL, $2.line);
           clear_local_scope();
       }
     ;
@@ -337,13 +356,21 @@ function_def
               YYERROR;
           }
           set_scope(LOCAL_SCOPE);
+          collecting_function_locals = 1;
+          current_function_local_bytes = 0;
+          current_function_locals = NULL;
       }
       optional_local_var_decl_stmt_list
       statement_list
       '}'
       {
           Ast *body = $8 ? $8 : make_sequence_ast($2.line);
-          $$ = make_procedure_ast($2.lexeme, current_func_return_type, NULL, 1, body, $2.line);
+          Ast *proc = make_procedure_ast($2.lexeme, current_func_return_type, NULL, current_function_local_bytes, 1, body, $2.line);
+          ((Procedure_Ast *)proc)->locals = current_function_locals;
+          $$ = proc;
+          collecting_function_locals = 0;
+          current_function_local_bytes = 0;
+          current_function_locals = NULL;
           set_scope(GLOBAL_SCOPE);
           clear_local_scope();
       }
@@ -354,13 +381,21 @@ function_def
               YYERROR;
           }
           set_scope(LOCAL_SCOPE);
+          collecting_function_locals = 1;
+          current_function_local_bytes = 0;
+          current_function_locals = NULL;
       }
       optional_local_var_decl_stmt_list
       statement_list
       '}'
       {
           Ast *body = $9 ? $9 : make_sequence_ast($2.line);
-          $$ = make_procedure_ast($2.lexeme, current_func_return_type, $4, 1, body, $2.line);
+          Ast *proc = make_procedure_ast($2.lexeme, current_func_return_type, $4, current_function_local_bytes, 1, body, $2.line);
+          ((Procedure_Ast *)proc)->locals = current_function_locals;
+          $$ = proc;
+          collecting_function_locals = 0;
+          current_function_local_bytes = 0;
+          current_function_locals = NULL;
           set_scope(GLOBAL_SCOPE);
           clear_local_scope();
       }
@@ -383,9 +418,13 @@ var_decl_item_list
 var_decl_item
     : IDENTIFIER
       {     
-          //printf("%s, %d\n", $1.lexeme, (int)current_decl_type);
-          insert_symbol($1.lexeme, current_decl_type);
-          //print_symbol_table();
+          Symbol_Table_Entry *entry = insert_symbol($1.lexeme, current_decl_type);
+          if (collecting_function_locals)
+          {
+              current_function_local_bytes += type_size_bytes(current_decl_type);
+              if (entry)
+                  append_ast_list_node(&current_function_locals, make_name_ast(entry, $1.line));
+          }
       }
     ;
 

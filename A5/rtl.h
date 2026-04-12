@@ -123,4 +123,15 @@ int rtl_generate_to_path(Ast *root, const char *path);
 /* Reset virtual register and label counters for deterministic output. */
 void rtl_reset_counters(void);
 
+/* Internal helpers used by spim.c */
+typedef struct
+{
+    char *name;
+    Rtl_Seq *seq;
+} Proc_Rtl_Block;
+
+Proc_Rtl_Block *rtl_collect_proc_blocks(Ast *root, int *out_count);
+void rtl_free_proc_blocks(Proc_Rtl_Block *blocks, int block_count);
+Data_Type lookup_symbol_type_safe(const char *name);
+
 #endif

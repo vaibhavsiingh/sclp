@@ -5,27 +5,11 @@
 
 #include "spim.h"
 #include "rtl.h"
-#include "tac.h"
+#include "symbol_table.h"
 
-typedef struct NameNode
-{
-    char *name;
-    int is_float;
-    struct NameNode *next;
-} NameNode;
-
-typedef struct StringNode
-{
-    char *label;
-    char *value;
-    struct StringNode *next;
-} StringNode;
-
-typedef struct LineNode
-{
-    char *line;
-    struct LineNode *next;
-} LineNode;
+/* ============================================================ */
+/* Utility Functions                                            */
+/* ============================================================ */
 
 static void *checked_malloc(size_t size)
 {
@@ -52,25 +36,37 @@ static char *xstrdup(const char *s)
     return p;
 }
 
-static void trim(char *s)
+/* ============================================================ */
+/* Data Symbol Collection                                       */
+/* ============================================================ */
+
+typedef struct Asm_Symbol
 {
-    size_t len;
-    size_t i = 0;
+    char *name;
+    struct Asm_Symbol *next;
+} Asm_Symbol;
 
-    if (!s)
-        return;
+static int is_register_name(const char *name)
+{
+    size_t i;
 
-    while (s[i] && isspace((unsigned char)s[i]))
-        i++;
-    if (i > 0)
-        memmove(s, s + i, strlen(s + i) + 1);
+    if (!name || !*name)
+        return 0;
 
-    len = strlen(s);
-    while (len > 0 && isspace((unsigned char)s[len - 1]))
+    if (strcmp(name, "sp") == 0 || strcmp(name, "fp") == 0 || strcmp(name, "ra") == 0 || strcmp(name, "zero") == 0)
+        return 1;
+
+    if ((name[0] == 't' || name[0] == 's' || name[0] == 'a' || name[0] == 'v' || name[0] == 'f') && isdigit((unsigned char)name[1]))
     {
-        s[len - 1] = '\0';
-        len--;
+        for (i = 2; name[i] != '\0'; i++)
+        {
+            if (!isdigit((unsigned char)name[i]))
+                return 0;
+        }
+        return 1;
     }
+
+    return 0;
 }
 
 static int is_integer_literal(const char *s)
@@ -129,14 +125,51 @@ static int is_float_literal(const char *s)
     return seen_digit && seen_dot;
 }
 
-static int is_label_name(const char *s)
+static int is_string_literal(const char *s)
+{
+    size_t len;
+
+    if (!s)
+        return 0;
+
+    len = strlen(s);
+    return len >= 2 && s[0] == '"' && s[len - 1] == '"';
+}
+
+static int is_temp_name(const char *s)
 {
     size_t i = 0;
 
     if (!s)
         return 0;
 
-    if (strncmp(s, "Label", 5) != 0)
+    if (strcmp(s, "extra") == 0)
+        return 1;
+
+    if (strncmp(s, "temp", 4) != 0)
+        return 0;
+
+    i = 4;
+    if (!isdigit((unsigned char)s[i]))
+        return 0;
+
+    for (; s[i] != '\0'; i++)
+    {
+        if (!isdigit((unsigned char)s[i]))
+            return 0;
+    }
+
+    return 1;
+}
+
+static int is_saved_temp_name(const char *s)
+{
+    size_t i = 0;
+
+    if (!s)
+        return 0;
+
+    if (strncmp(s, "stemp", 5) != 0)
         return 0;
 
     i = 5;
@@ -152,640 +185,521 @@ static int is_label_name(const char *s)
     return 1;
 }
 
-static int is_string_label(const char *s)
+static int is_codegen_label_name(const char *name)
 {
-    size_t i = 0;
-
-    if (!s)
-        return 0;
-
-    if (strncmp(s, "_str_", 5) != 0)
-        return 0;
-
-    i = 5;
-    if (!isdigit((unsigned char)s[i]))
-        return 0;
-
-    for (; s[i] != '\0'; i++)
-    {
-        if (!isdigit((unsigned char)s[i]))
-            return 0;
-    }
-
-    return 1;
-}
-
-static int is_register_name(const char *s)
-{
-    if (!s || !*s)
-        return 0;
-
-    if (strcmp(s, "zero") == 0 || strcmp(s, "ra") == 0 || strcmp(s, "sp") == 0 ||
-        strcmp(s, "gp") == 0 || strcmp(s, "fp") == 0 || strcmp(s, "at") == 0 ||
-        strcmp(s, "k0") == 0 || strcmp(s, "k1") == 0)
-        return 1;
-
-    if ((s[0] == 'v' && s[1] >= '0' && s[1] <= '1' && s[2] == '\0') ||
-        (s[0] == 'a' && s[1] >= '0' && s[1] <= '3' && s[2] == '\0') ||
-        (s[0] == 's' && s[1] >= '0' && s[1] <= '7' && s[2] == '\0'))
-        return 1;
-
-    if (s[0] == 't' && isdigit((unsigned char)s[1]))
-    {
-        int n = atoi(s + 1);
-        return n >= 0 && n <= 9;
-    }
-
-    if (s[0] == 'f' && isdigit((unsigned char)s[1]))
-    {
-        int n = atoi(s + 1);
-        return n >= 0 && n <= 31;
-    }
-
-    return 0;
-}
-
-static void format_reg(const char *name, char *out, size_t out_size)
-{
-    if (!out || out_size == 0)
-        return;
+    size_t i;
 
     if (!name)
+        return 0;
+
+    if (strncmp(name, "Label", 5) != 0)
+        return 0;
+
+    if (!isdigit((unsigned char)name[5]))
+        return 0;
+
+    for (i = 6; name[i] != '\0'; i++)
     {
-        snprintf(out, out_size, "$zero");
-        return;
+        if (!isdigit((unsigned char)name[i]))
+            return 0;
     }
 
-    if (name[0] == '$')
-    {
-        snprintf(out, out_size, "%s", name);
-        return;
-    }
-
-    snprintf(out, out_size, "$%s", name);
+    return 1;
 }
 
-static int name_exists(NameNode *head, const char *name)
+static int is_data_symbol_name(const char *name)
 {
-    NameNode *cur = head;
+    if (!name || !*name)
+        return 0;
+    if (is_register_name(name))
+        return 0;
+    if (is_integer_literal(name) || is_float_literal(name) || is_string_literal(name))
+        return 0;
+    if (is_temp_name(name) || is_saved_temp_name(name))
+        return 0;
+    if (is_codegen_label_name(name))
+        return 0;
+    if (strncmp(name, "_str_", 5) == 0)
+        return 0;
+    return 1;
+}
 
-    while (cur)
+static void add_asm_symbol(Asm_Symbol **head, const char *name)
+{
+    Asm_Symbol *cur;
+    Asm_Symbol *prev = NULL;
+    Asm_Symbol *node;
+
+    if (!head || !is_data_symbol_name(name))
+        return;
+
+    for (cur = *head; cur; cur = cur->next)
     {
         if (strcmp(cur->name, name) == 0)
-            return 1;
-        cur = cur->next;
+            return;
+        if (strcmp(cur->name, name) > 0)
+            break;
+        prev = cur;
     }
 
-    return 0;
-}
-
-static void add_symbol(NameNode **head, const char *name, int is_float)
-{
-    NameNode *node;
-
-    if (!head || !name || !*name)
-        return;
-
-    if (is_register_name(name) || is_integer_literal(name) || is_float_literal(name) ||
-        is_label_name(name) || is_string_label(name))
-        return;
-
-    if (name_exists(*head, name))
-    {
-        if (is_float)
-        {
-            NameNode *cur = *head;
-            while (cur)
-            {
-                if (strcmp(cur->name, name) == 0)
-                {
-                    cur->is_float = 1;
-                    return;
-                }
-                cur = cur->next;
-            }
-        }
-        return;
-    }
-
-    node = (NameNode *)checked_malloc(sizeof(NameNode));
+    node = (Asm_Symbol *)checked_malloc(sizeof(Asm_Symbol));
     node->name = xstrdup(name);
-    node->is_float = is_float;
-    node->next = *head;
-    *head = node;
-}
-
-static StringNode *find_string_by_label(StringNode *head, const char *label)
-{
-    StringNode *cur = head;
-
-    while (cur)
+    if (!prev)
     {
-        if (strcmp(cur->label, label) == 0)
-            return cur;
-        cur = cur->next;
-    }
-
-    return NULL;
-}
-
-static StringNode *find_string_by_value(StringNode *head, const char *value)
-{
-    StringNode *cur = head;
-
-    while (cur)
-    {
-        if (strcmp(cur->value, value) == 0)
-            return cur;
-        cur = cur->next;
-    }
-
-    return NULL;
-}
-
-static void add_string_literal(StringNode **head, const char *label, const char *value)
-{
-    StringNode *node;
-
-    if (!head || !label || !value)
-        return;
-
-    if (find_string_by_label(*head, label))
-        return;
-
-    node = (StringNode *)checked_malloc(sizeof(StringNode));
-    node->label = xstrdup(label);
-    node->value = xstrdup(value);
-    node->next = *head;
-    *head = node;
-}
-
-static void append_line(LineNode **head, LineNode **tail, const char *line)
-{
-    LineNode *node;
-
-    if (!head || !tail || !line)
-        return;
-
-    node = (LineNode *)checked_malloc(sizeof(LineNode));
-    node->line = xstrdup(line);
-    node->next = NULL;
-
-    if (!*head)
+        node->next = *head;
         *head = node;
+    }
     else
-        (*tail)->next = node;
-
-    *tail = node;
-}
-
-static void free_lines(LineNode *head)
-{
-    LineNode *cur = head;
-
-    while (cur)
     {
-        LineNode *next = cur->next;
-        free(cur->line);
-        free(cur);
-        cur = next;
+        node->next = prev->next;
+        prev->next = node;
     }
 }
 
-static void free_symbols(NameNode *head)
+static void free_asm_symbols(Asm_Symbol *head)
 {
-    NameNode *cur = head;
+    Asm_Symbol *cur = head;
 
     while (cur)
     {
-        NameNode *next = cur->next;
+        Asm_Symbol *next = cur->next;
         free(cur->name);
         free(cur);
         cur = next;
     }
 }
 
-static void free_strings(StringNode *head)
+static void collect_data_symbols_from_seq(const Rtl_Seq *seq, Asm_Symbol **head)
 {
-    StringNode *cur = head;
+    Rtl *cur;
 
+    if (!seq || !head)
+        return;
+
+    for (cur = seq->head; cur; cur = cur->next)
+    {
+        if (cur->kind == RTL_OP2)
+        {
+            Rtl_Op2 *ins = (Rtl_Op2 *)cur;
+
+            if (strcmp(ins->op, "load") == 0 || strcmp(ins->op, "load.d") == 0)
+                add_asm_symbol(head, ins->src);
+            else if (strcmp(ins->op, "store") == 0 || strcmp(ins->op, "store.d") == 0)
+                add_asm_symbol(head, ins->dst);
+        }
+    }
+}
+
+/* ============================================================ */
+/* Local Variable Frame Addressing                             */
+/* ============================================================ */
+
+static int local_offset_for_symbol(const Procedure_Ast *proc, const char *name, int *offset)
+{
+    Ast_List *cur;
+    int slot = 0;
+
+    if (!proc || !name)
+        return 0;
+
+    cur = proc->locals;
     while (cur)
     {
-        StringNode *next = cur->next;
-        free(cur->label);
-        free(cur->value);
-        free(cur);
-        cur = next;
+        if (cur->stmt && cur->stmt->kind == AST_NAME)
+        {
+            Name_Ast *local = (Name_Ast *)cur->stmt;
+            slot++;
+            if (local->entry && local->entry->name && strcmp(local->entry->name, name) == 0)
+            {
+                if (offset)
+                    *offset = -4 * slot;
+                return 1;
+            }
+        }
+        cur = cur->next;
     }
+
+    return 0;
 }
 
-static void write_escaped_string(FILE *out, const char *s)
+/* ============================================================ */
+/* Label Alias / Canonicalization                              */
+/* ============================================================ */
+
+typedef struct LabelAlias
 {
-    const unsigned char *p = (const unsigned char *)s;
+    char *from;
+    char *to;
+    struct LabelAlias *next;
+} LabelAlias;
 
-    fputc('"', out);
-    while (*p)
-    {
-        if (*p == '\\' || *p == '"')
-            fprintf(out, "\\%c", *p);
-        else if (*p == '\n')
-            fputs("\\n", out);
-        else if (*p == '\t')
-            fputs("\\t", out);
-        else
-            fputc(*p, out);
-        p++;
-    }
-    fputc('"', out);
-}
 
-static void collect_string_literals_from_tac(Ast *root, StringNode **strings)
+
+
+
+/* ============================================================ */
+/* SPIM Instruction Emission                                    */
+/* ============================================================ */
+
+static void fprint_reg(FILE *out, const char *name)
 {
-    FILE *tmp;
-    char line[1024];
-    int idx = 0;
-
-    if (!root || !strings)
+    if (!name)
         return;
-
-    tmp = tmpfile();
-    if (!tmp)
-        return;
-
-    tac_generate(root, tmp);
-    rewind(tmp);
-
-    while (fgets(line, sizeof(line), tmp))
-    {
-        char *start = strchr(line, '"');
-        char *end = strrchr(line, '"');
-        char label[64];
-
-        if (!start || !end || end == start)
-            continue;
-
-        *end = '\0';
-        start++;
-        if (!*start)
-            continue;
-
-        if (find_string_by_value(*strings, start))
-            continue;
-
-        snprintf(label, sizeof(label), "_str_%d", idx++);
-        add_string_literal(strings, label, start);
-    }
-
-    fclose(tmp);
-}
-
-static void emit_op2(const char *op, const char *dst, const char *src,
-                     NameNode **symbols, StringNode **strings,
-                     LineNode **text_head, LineNode **text_tail)
-{
-    char out[512];
-    char rd[64], rs[64];
-
-    if (strcmp(op, "iLoad") == 0)
-    {
-        format_reg(dst, rd, sizeof(rd));
-        snprintf(out, sizeof(out), "    li %s, %s", rd, src);
-        append_line(text_head, text_tail, out);
-        return;
-    }
-
-    if (strcmp(op, "iLoad.d") == 0)
-    {
-        format_reg(dst, rd, sizeof(rd));
-        snprintf(out, sizeof(out), "    li.s %s, %s", rd, src);
-        append_line(text_head, text_tail, out);
-        return;
-    }
-
-    if (strcmp(op, "load") == 0)
-    {
-        add_symbol(symbols, src, 0);
-        format_reg(dst, rd, sizeof(rd));
-        snprintf(out, sizeof(out), "    lw %s, %s", rd, src);
-        append_line(text_head, text_tail, out);
-        return;
-    }
-
-    if (strcmp(op, "load.d") == 0)
-    {
-        add_symbol(symbols, src, 1);
-        format_reg(dst, rd, sizeof(rd));
-        snprintf(out, sizeof(out), "    l.s %s, %s", rd, src);
-        append_line(text_head, text_tail, out);
-        return;
-    }
-
-    if (strcmp(op, "store") == 0)
-    {
-        add_symbol(symbols, dst, 0);
-        format_reg(src, rs, sizeof(rs));
-        snprintf(out, sizeof(out), "    sw %s, %s", rs, dst);
-        append_line(text_head, text_tail, out);
-        return;
-    }
-
-    if (strcmp(op, "store.d") == 0)
-    {
-        add_symbol(symbols, dst, 1);
-        format_reg(src, rs, sizeof(rs));
-        snprintf(out, sizeof(out), "    s.s %s, %s", rs, dst);
-        append_line(text_head, text_tail, out);
-        return;
-    }
-
-    if (strcmp(op, "load_addr") == 0)
-    {
-        format_reg(dst, rd, sizeof(rd));
-        if (is_string_label(src) && !find_string_by_label(*strings, src))
-            add_string_literal(strings, src, "");
-        snprintf(out, sizeof(out), "    la %s, %s", rd, src);
-        append_line(text_head, text_tail, out);
-        return;
-    }
-
-    if (strcmp(op, "move") == 0)
-    {
-        format_reg(dst, rd, sizeof(rd));
-        format_reg(src, rs, sizeof(rs));
-        snprintf(out, sizeof(out), "    move %s, %s", rd, rs);
-        append_line(text_head, text_tail, out);
-        return;
-    }
-
-    if (strcmp(op, "move.d") == 0)
-    {
-        format_reg(dst, rd, sizeof(rd));
-        format_reg(src, rs, sizeof(rs));
-        snprintf(out, sizeof(out), "    mov.s %s, %s", rd, rs);
-        append_line(text_head, text_tail, out);
-        return;
-    }
-
-    if (strcmp(op, "uminus") == 0)
-    {
-        format_reg(dst, rd, sizeof(rd));
-        format_reg(src, rs, sizeof(rs));
-        snprintf(out, sizeof(out), "    sub %s, $zero, %s", rd, rs);
-        append_line(text_head, text_tail, out);
-        return;
-    }
-
-    if (strcmp(op, "uminus.d") == 0)
-    {
-        format_reg(dst, rd, sizeof(rd));
-        format_reg(src, rs, sizeof(rs));
-        snprintf(out, sizeof(out), "    neg.s %s, %s", rd, rs);
-        append_line(text_head, text_tail, out);
-        return;
-    }
-
-    if (strcmp(op, "not") == 0)
-    {
-        format_reg(dst, rd, sizeof(rd));
-        format_reg(src, rs, sizeof(rs));
-        snprintf(out, sizeof(out), "    seq %s, %s, $zero", rd, rs);
-        append_line(text_head, text_tail, out);
-        return;
-    }
-
-    snprintf(out, sizeof(out), "    # unsupported op2 %s: %s <- %s", op, dst, src);
-    append_line(text_head, text_tail, out);
-}
-
-static void emit_op3(const char *op, const char *dst, const char *src1, const char *src2,
-                     LineNode **text_head, LineNode **text_tail)
-{
-    char out[512];
-    char rd[64], r1[64], r2[64];
-
-    format_reg(dst, rd, sizeof(rd));
-    format_reg(src1, r1, sizeof(r1));
-    format_reg(src2, r2, sizeof(r2));
-
-    if (strcmp(op, "add") == 0 || strcmp(op, "sub") == 0 || strcmp(op, "mul") == 0 ||
-        strcmp(op, "and") == 0 || strcmp(op, "or") == 0 || strcmp(op, "slt") == 0 ||
-        strcmp(op, "sle") == 0 || strcmp(op, "sgt") == 0 || strcmp(op, "sge") == 0 ||
-        strcmp(op, "seq") == 0 || strcmp(op, "sne") == 0)
-    {
-        snprintf(out, sizeof(out), "    %s %s, %s, %s", op, rd, r1, r2);
-        append_line(text_head, text_tail, out);
-        return;
-    }
-
-    if (strcmp(op, "div") == 0)
-    {
-        snprintf(out, sizeof(out), "    div %s, %s", r1, r2);
-        append_line(text_head, text_tail, out);
-        snprintf(out, sizeof(out), "    mflo %s", rd);
-        append_line(text_head, text_tail, out);
-        return;
-    }
-
-    if (strcmp(op, "add.d") == 0 || strcmp(op, "sub.d") == 0 ||
-        strcmp(op, "mul.d") == 0 || strcmp(op, "div.d") == 0)
-    {
-        char mop[16];
-        snprintf(mop, sizeof(mop), "%c%c%c.s", op[0], op[1], op[2]);
-        snprintf(out, sizeof(out), "    %s %s, %s, %s", mop, rd, r1, r2);
-        append_line(text_head, text_tail, out);
-        return;
-    }
-
-    if (strcmp(op, "movf") == 0 || strcmp(op, "movt") == 0)
-    {
-        if (src2 && *src2)
-            snprintf(out, sizeof(out), "    %s %s, %s, %s", op, rd, r1, src2);
-        else
-            snprintf(out, sizeof(out), "    %s %s, %s", op, rd, r1);
-        append_line(text_head, text_tail, out);
-        return;
-    }
-
-    snprintf(out, sizeof(out), "    # unsupported op3 %s: %s <- %s, %s", op, dst, src1, src2);
-    append_line(text_head, text_tail, out);
-}
-
-static void emit_op2_comma(const char *op, const char *src1, const char *src2,
-                           LineNode **text_head, LineNode **text_tail)
-{
-    char out[512];
-    char r1[64], r2[64];
-
-    format_reg(src1, r1, sizeof(r1));
-    format_reg(src2, r2, sizeof(r2));
-
-    if (strcmp(op, "seq.d") == 0)
-        snprintf(out, sizeof(out), "    c.eq.s %s, %s", r1, r2);
-    else if (strcmp(op, "slt.d") == 0)
-        snprintf(out, sizeof(out), "    c.lt.s %s, %s", r1, r2);
-    else if (strcmp(op, "sle.d") == 0)
-        snprintf(out, sizeof(out), "    c.le.s %s, %s", r1, r2);
+    if (name[0] == '$')
+        fprintf(out, "%s", name);
     else
-        snprintf(out, sizeof(out), "    # unsupported op2-comma %s: %s, %s", op, src1, src2);
-
-    append_line(text_head, text_tail, out);
+        fprintf(out, "$%s", name);
 }
 
-static void parse_rtl_and_emit(Ast *root, NameNode **symbols, StringNode **strings,
-                               LineNode **text_head, LineNode **text_tail)
+static void fprint_operand(FILE *out, const char *value)
 {
-    FILE *tmp;
-    char line[1024];
+    if (is_register_name(value))
+        fprint_reg(out, value);
+    else
+        fprintf(out, "%s", value ? value : "");
+}
 
-    if (!root)
-        return;
+static const char *strip_trailing_proc_suffix(const char *name)
+{
+    static char buf[256];
+    size_t len;
 
-    tmp = tmpfile();
-    if (!tmp)
-        return;
+    if (!name)
+        return "";
 
-    rtl_generate(root, tmp);
-    rewind(tmp);
-
-    while (fgets(line, sizeof(line), tmp))
+    len = strlen(name);
+    if (len > 0 && name[len - 1] == '_')
     {
-        char op[64], a[256], b[256], c[256];
-        char *comment;
+        size_t n = len - 1;
+        if (n >= sizeof(buf))
+            n = sizeof(buf) - 1;
+        memcpy(buf, name, n);
+        buf[n] = '\0';
+        return buf;
+    }
 
-        trim(line);
-        if (line[0] == '\0' || line[0] == '*')
-            continue;
+    return name;
+}
 
-        comment = strstr(line, ";;");
-        if (comment)
-            *comment = '\0';
-        trim(line);
-        if (line[0] == '\0')
-            continue;
+static void emit_spim_op2(FILE *out, const Rtl_Op2 *ins, const Procedure_Ast *proc)
+{
+    int local_off = 0;
 
-        if (sscanf(line, "goto: %255s", a) == 1)
+    if (strcmp(ins->op, "load") == 0)
+    {
+        fprintf(out, "    lw ");
+        fprint_reg(out, ins->dst);
+        if (local_offset_for_symbol(proc, ins->src, &local_off))
+            fprintf(out, ", %d($fp)\n", local_off);
+        else
+            fprintf(out, ", %s\n", ins->src);
+    }
+    else if (strcmp(ins->op, "load.d") == 0)
+    {
+        fprintf(out, "    l.d ");
+        fprint_reg(out, ins->dst);
+        if (local_offset_for_symbol(proc, ins->src, &local_off))
+            fprintf(out, ", %d($fp)\n", local_off);
+        else
+            fprintf(out, ", %s\n", ins->src);
+    }
+    else if (strcmp(ins->op, "store") == 0)
+    {
+        fprintf(out, "    sw ");
+        fprint_operand(out, ins->src);
+        if (local_offset_for_symbol(proc, ins->dst, &local_off))
+            fprintf(out, ", %d($fp)\n", local_off);
+        else
+            fprintf(out, ", %s\n", ins->dst);
+    }
+    else if (strcmp(ins->op, "store.d") == 0)
+    {
+        fprintf(out, "    s.d ");
+        fprint_operand(out, ins->src);
+        if (local_offset_for_symbol(proc, ins->dst, &local_off))
+            fprintf(out, ", %d($fp)\n", local_off);
+        else
+            fprintf(out, ", %s\n", ins->dst);
+    }
+    else if (strcmp(ins->op, "iLoad") == 0)
+    {
+        fprintf(out, "    li ");
+        fprint_reg(out, ins->dst);
+        fprintf(out, ", %s\n", ins->src);
+    }
+    else if (strcmp(ins->op, "iLoad.d") == 0)
+    {
+        fprintf(out, "    li.d ");
+        fprint_reg(out, ins->dst);
+        fprintf(out, ", %s\n", ins->src);
+    }
+    else if (strcmp(ins->op, "move") == 0)
+    {
+        fprintf(out, "    move ");
+        fprint_reg(out, ins->dst);
+        fprintf(out, ", ");
+        fprint_operand(out, ins->src);
+        fprintf(out, "\n");
+    }
+    else if (strcmp(ins->op, "move.d") == 0)
+    {
+        fprintf(out, "    mov.d ");
+        fprint_reg(out, ins->dst);
+        fprintf(out, ", ");
+        fprint_operand(out, ins->src);
+        fprintf(out, "\n");
+    }
+    else if (strcmp(ins->op, "uminus") == 0)
+    {
+        fprintf(out, "    sub ");
+        fprint_reg(out, ins->dst);
+        fprintf(out, ", $zero, ");
+        fprint_operand(out, ins->src);
+        fprintf(out, "\n");
+    }
+    else if (strcmp(ins->op, "uminus.d") == 0)
+    {
+        fprintf(out, "    neg.d ");
+        fprint_reg(out, ins->dst);
+        fprintf(out, ", ");
+        fprint_operand(out, ins->src);
+        fprintf(out, "\n");
+    }
+    else if (strcmp(ins->op, "not") == 0)
+    {
+        fprintf(out, "    xori ");
+        fprint_reg(out, ins->dst);
+        fprintf(out, ", ");
+        fprint_operand(out, ins->src);
+        fprintf(out, ", 1\n");
+    }
+    else if (strcmp(ins->op, "load_addr") == 0)
+    {
+        fprintf(out, "    la ");
+        fprint_reg(out, ins->dst);
+        fprintf(out, ", %s\n", ins->src);
+    }
+}
+
+static void emit_spim_op3(FILE *out, const Rtl_Op3 *ins)
+{
+    fprintf(out, "    %s ", ins->op ? ins->op : "");
+    fprint_operand(out, ins->dst);
+    fprintf(out, ", ");
+    fprint_operand(out, ins->src1);
+    fprintf(out, ", ");
+    fprint_operand(out, ins->src2);
+    fprintf(out, "\n");
+}
+
+static void emit_spim_op2_comma(FILE *out, const Rtl_Op2Comma *ins)
+{
+    const char *mapped = ins->op;
+
+    if (strcmp(ins->op, "slt.d") == 0)
+        mapped = "c.lt.d";
+    else if (strcmp(ins->op, "sle.d") == 0)
+        mapped = "c.le.d";
+    else if (strcmp(ins->op, "seq.d") == 0)
+        mapped = "c.eq.d";
+
+    fprintf(out, "    %s ", mapped ? mapped : "");
+    fprint_operand(out, ins->src1);
+    fprintf(out, ", ");
+    fprint_operand(out, ins->src2);
+    fprintf(out, "\n");
+}
+
+static int data_type_size_bytes(Data_Type type)
+{
+    switch (type)
+    {
+    case VOID_TYPE:
+        return 0;
+    default:
+        return 4;
+    }
+}
+
+static const Procedure_Ast *find_procedure_ast(const Ast *root, const char *proc_name)
+{
+    const Program_Ast *prog;
+    Ast_List *cur;
+
+    if (!root || root->kind != AST_PROGRAM || !proc_name)
+        return NULL;
+
+    prog = (const Program_Ast *)root;
+    for (cur = prog->procedures; cur; cur = cur->next)
+    {
+        if (cur->stmt && cur->stmt->kind == AST_PROCEDURE)
         {
-            char out[320];
-            snprintf(out, sizeof(out), "    b %s", a);
-            append_line(text_head, text_tail, out);
-            continue;
-        }
-
-        if (sscanf(line, "bgtz: %255[^,], %255s", a, b) == 2)
-        {
-            char out[320];
-            char rc[64];
-            trim(a);
-            trim(b);
-            format_reg(a, rc, sizeof(rc));
-            snprintf(out, sizeof(out), "    bgtz %s, %s", rc, b);
-            append_line(text_head, text_tail, out);
-            continue;
-        }
-
-        if (strcmp(line, "write") == 0 || strcmp(line, "read") == 0)
-        {
-            append_line(text_head, text_tail, "    syscall");
-            continue;
-        }
-
-        if (strcmp(line, "return") == 0)
-        {
-            append_line(text_head, text_tail, "    li $v0, 10");
-            append_line(text_head, text_tail, "    syscall");
-            continue;
-        }
-
-        if (sscanf(line, "%63[^:]: %255s <- %255[^,], %255s", op, a, b, c) == 4)
-        {
-            trim(op);
-            trim(a);
-            trim(b);
-            trim(c);
-            emit_op3(op, a, b, c, text_head, text_tail);
-            continue;
-        }
-
-        if (sscanf(line, "%63[^:]: %255[^,], %255s", op, a, b) == 3)
-        {
-            trim(op);
-            trim(a);
-            trim(b);
-            emit_op2_comma(op, a, b, text_head, text_tail);
-            continue;
-        }
-
-        if (sscanf(line, "%63[^:]: %255s <- %255s", op, a, b) == 3)
-        {
-            trim(op);
-            trim(a);
-            trim(b);
-            emit_op2(op, a, b, symbols, strings, text_head, text_tail);
-            continue;
-        }
-
-        if (line[strlen(line) - 1] == ':')
-        {
-            append_line(text_head, text_tail, line);
-            continue;
-        }
-
-        {
-            char out[1080];
-            snprintf(out, sizeof(out), "    # unparsed RTL: %s", line);
-            append_line(text_head, text_tail, out);
+            const Procedure_Ast *proc = (const Procedure_Ast *)cur->stmt;
+            if (proc->name && strcmp(proc->name, proc_name) == 0)
+                return proc;
         }
     }
 
-    fclose(tmp);
+    return NULL;
 }
+
+static int compute_frame_size_bytes(const Ast *root, const char *proc_name)
+{
+    const Procedure_Ast *proc = find_procedure_ast(root, proc_name);
+    int locals_size = 0;
+    int return_size = 0;
+
+    if (proc)
+    {
+        locals_size = proc->local_var_bytes;
+        return_size = data_type_size_bytes(proc->return_type);
+    }
+
+    return locals_size + 8 + return_size;
+}
+
+static void emit_spim_seq(FILE *out, const Rtl_Seq *seq, const char *proc_name, int frame_size, const Procedure_Ast *proc, const Ast *root)
+{
+    const Rtl *cur;
+    const char *name = (proc_name && *proc_name) ? proc_name : "anon";
+
+    fprintf(out, "\n.text\n");
+    fprintf(out, ".globl %s\n", name);
+    fprintf(out, "%s:\n", name);
+    fprintf(out, "    # Prologue begins\n");
+    fprintf(out, "    sw $ra, 0($sp)\n");
+    fprintf(out, "    sw $fp, -4($sp)\n");
+    fprintf(out, "    sub $fp, $sp, 4\n");
+    fprintf(out, "    sub $sp, $sp, %d\n", frame_size);
+    fprintf(out, "    # Prologue ends\n\n");
+
+    for (cur = seq ? seq->head : NULL; cur; cur = cur->next)
+    {
+        switch (cur->kind)
+        {
+        case RTL_LABEL:
+        {
+            const Rtl_Label *ins = (const Rtl_Label *)cur;
+            if (ins->label)
+                fprintf(out, "%s:\n", ins->label);
+            break;
+        }
+        case RTL_GOTO:
+        {
+            const Rtl_Goto *ins = (const Rtl_Goto *)cur;
+            fprintf(out, "    j %s\n", ins->label ? ins->label : "");
+            break;
+        }
+        case RTL_BGTZ:
+        {
+            const Rtl_Bgtz *ins = (const Rtl_Bgtz *)cur;
+            fprintf(out, "    bgtz ");
+            fprint_operand(out, ins->reg);
+            fprintf(out, ", %s\n", ins->label ? ins->label : "");
+            break;
+        }
+        case RTL_CALL:
+        {
+            const Rtl_Call *ins = (const Rtl_Call *)cur;
+            fprintf(out, "    jal %s\n", strip_trailing_proc_suffix(ins->name));
+            break;
+        }
+        case RTL_OP0:
+        {
+            const Rtl_Op0 *ins = (const Rtl_Op0 *)cur;
+            if (strcmp(ins->op, "write") == 0 || strcmp(ins->op, "read") == 0)
+                fprintf(out, "    syscall\n");
+            else if (strcmp(ins->op, "pop") == 0)
+                fprintf(out, "    add $sp, $sp, 4\n");
+            else if (strcmp(ins->op, "return") == 0)
+                fprintf(out, "    j epilogue_%s\n", name);
+            break;
+        }
+        case RTL_OP1:
+        {
+            const Rtl_Op1 *ins = (const Rtl_Op1 *)cur;
+            if (strcmp(ins->op, "push") == 0)
+            {
+                fprintf(out, "    sub $sp, $sp, 4\n");
+                fprintf(out, "    sw ");
+                fprint_operand(out, ins->src);
+                fprintf(out, ", 0($sp)\n");
+            }
+            else if (strcmp(ins->op, "return") == 0)
+            {
+                if (ins->src && *ins->src && strcmp(ins->src, "v1") != 0 && strcmp(ins->src, "f0") != 0)
+                {
+                    fprintf(out, "    move $v1, ");
+                    fprint_operand(out, ins->src);
+                    fprintf(out, "\n");
+                }
+                fprintf(out, "    j epilogue_%s\n", name);
+            }
+            break;
+        }
+        case RTL_OP2:
+            emit_spim_op2(out, (const Rtl_Op2 *)cur, proc);
+            break;
+        case RTL_OP3:
+            emit_spim_op3(out, (const Rtl_Op3 *)cur);
+            break;
+        case RTL_OP2_COMMA:
+            emit_spim_op2_comma(out, (const Rtl_Op2Comma *)cur);
+            break;
+        default:
+            break;
+        }
+    }
+
+    fprintf(out, "\nepilogue_%s:\n", name);
+    fprintf(out, "    add $sp, $sp, %d\n", frame_size);
+    fprintf(out, "    lw $fp, -4($sp)\n");
+    fprintf(out, "    lw $ra, 0($sp)\n");
+    fprintf(out, "    jr $ra\n");
+}
+
+/* ============================================================ */
+/* Public API                                                   */
+/* ============================================================ */
 
 void spim_generate(Ast *root, FILE *out)
 {
-    NameNode *symbols = NULL;
-    StringNode *strings = NULL;
-    LineNode *text_head = NULL;
-    LineNode *text_tail = NULL;
-    NameNode *sym;
-    StringNode *str;
-    LineNode *line;
+    Rtl *cur;
+    Asm_Symbol *symbols = NULL;
+    Asm_Symbol *sym;
+    Proc_Rtl_Block *blocks = NULL;
+    int block_count = 0;
 
-    if (!out)
+    if (!root || !out)
         return;
 
-    collect_string_literals_from_tac(root, &strings);
-    parse_rtl_and_emit(root, &symbols, &strings, &text_head, &text_tail);
+    rtl_reset_counters();
+    blocks = rtl_collect_proc_blocks(root, &block_count);
+    if (!blocks || block_count == 0)
+        return;
+
+    for (int i = 0; i < block_count; i++)
+        collect_data_symbols_from_seq(blocks[i].seq, &symbols);
 
     fputs(".data\n", out);
-
-    for (str = strings; str; str = str->next)
-    {
-        fprintf(out, "%s: .asciiz ", str->label);
-        write_escaped_string(out, str->value);
-        fputc('\n', out);
-    }
-
     for (sym = symbols; sym; sym = sym->next)
     {
-        if (sym->is_float)
+        Data_Type t = lookup_symbol_type_safe(sym->name);
+        if (t == FLOAT_TYPE)
             fprintf(out, "%s: .float 0.0\n", sym->name);
         else
             fprintf(out, "%s: .word 0\n", sym->name);
     }
 
-    fputs("\n.text\n", out);
-    fputs(".globl main\n", out);
-    fputs("main:\n", out);
+    for (int i = 0; i < block_count; i++)
+    {
+        const Procedure_Ast *proc = find_procedure_ast(root, blocks[i].name);
+        int frame_size = compute_frame_size_bytes(root, blocks[i].name);
+        emit_spim_seq(out, blocks[i].seq, blocks[i].name, frame_size, proc, root);
+    }
 
-    for (line = text_head; line; line = line->next)
-        fprintf(out, "%s\n", line->line);
-
-    fputs("    li $v0, 10\n", out);
-    fputs("    syscall\n", out);
-
-    free_lines(text_head);
-    free_symbols(symbols);
-    free_strings(strings);
+    free_asm_symbols(symbols);
+    rtl_free_proc_blocks(blocks, block_count);
 }
 
 int spim_generate_to_path(Ast *root, const char *path)
@@ -802,4 +716,9 @@ int spim_generate_to_path(Ast *root, const char *path)
     spim_generate(root, fp);
     fclose(fp);
     return 1;
+}
+
+void spim_reset_counters(void)
+{
+    rtl_reset_counters();
 }

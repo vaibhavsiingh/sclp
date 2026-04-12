@@ -7,6 +7,7 @@
 #include "symbol_table.h"
 #include "tac.h"
 #include "rtl.h"
+#include "spim.h"
 
 int yyparse(void);
 int yylex(void);
@@ -19,6 +20,7 @@ FILE *tokfile = NULL;
 FILE *astfile = NULL;
 FILE *tacfile = NULL;
 FILE *rtlfile = NULL;
+FILE *spimfile = NULL;
 int sa_scan = 0;
 int sa_parse = 0;
 int sa_ast = 0;
@@ -31,7 +33,8 @@ typedef enum
     STAGE_PARSE,
     STAGE_AST,
     STAGE_TAC,
-    STAGE_RTL
+    STAGE_RTL,
+    STAGE_SPIM
 } Compile_Stage;
 
 static void close_outputs(void)
@@ -44,11 +47,14 @@ static void close_outputs(void)
         fclose(tacfile);
     if (rtlfile)
         fclose(rtlfile);
+    if (spimfile)
+        fclose(spimfile);
 
     tokfile = NULL;
     astfile = NULL;
     tacfile = NULL;
     rtlfile = NULL;
+    spimfile = NULL;
 }
 
 static FILE *open_output_with_suffix(const char *input_file, const char *suffix, const char *label)
@@ -87,13 +93,14 @@ int main(int argc, char **argv)
     int show_ast = 0;
     int show_tac = 0;
     int show_rtl = 0;
-    Compile_Stage stop_stage = STAGE_RTL;
+    int show_spim = 0;
+    Compile_Stage stop_stage = STAGE_SPIM;
     int parse_ok = 0;
     int semantic_ok = 1;
 
     if (argc < 2)
     {
-        fprintf(stderr, "Usage: %s [--show-tokens] [--show-ast] [--show-tac] [--show-rtl] [--sa-scan] [--sa-parse] [--sa-ast] [--sa-tac] [--sa-rtl] <source-file>\n", argv[0]);
+        fprintf(stderr, "Usage: %s [--show-tokens] [--show-ast] [--show-tac] [--show-rtl] [--show-spim] [--show-asm] [--sa-scan] [--sa-parse] [--sa-ast] [--sa-tac] [--sa-rtl] <source-file>\n", argv[0]);
         return 1;
     }
 
@@ -123,6 +130,10 @@ int main(int argc, char **argv)
             else if (strcmp(argv[i], "--show-rtl") == 0)
             {
                 show_rtl = 1;
+            }
+            else if (strcmp(argv[i], "--show-spim") == 0 || strcmp(argv[i], "--show-asm") == 0)
+            {
+                show_spim = 1;
             }
             else if (strcmp(argv[i], "--sa-parse") == 0)
             {
@@ -156,7 +167,7 @@ int main(int argc, char **argv)
     if (!input_file)
     {
         fprintf(stderr, "Error: No input file specified\n");
-        fprintf(stderr, "Usage: %s [--show-tokens] [--show-ast] [--show-tac] [--show-rtl] [--sa-scan] [--sa-parse] [--sa-ast] [--sa-tac] [--sa-rtl] <source-file>\n", argv[0]);
+        fprintf(stderr, "Usage: %s [--show-tokens] [--show-ast] [--show-tac] [--show-rtl] [--show-spim] [--show-asm] [--sa-scan] [--sa-parse] [--sa-ast] [--sa-tac] [--sa-rtl] <source-file>\n", argv[0]);
         return 1;
     }
 
@@ -250,6 +261,20 @@ int main(int argc, char **argv)
                 else
                 {
                     rtl_generate(root, rtlfile);
+                }
+            }
+
+            /* Stage 6: SPIM/ASM */
+            if (semantic_ok && stop_stage != STAGE_AST && stop_stage != STAGE_TAC && show_spim)
+            {
+                spimfile = open_output_with_suffix(input_file, ".spim", "spimfile");
+                if (!spimfile)
+                {
+                    semantic_ok = 0;
+                }
+                else
+                {
+                    spim_generate(root, spimfile);
                 }
             }
         }

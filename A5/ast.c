@@ -331,7 +331,7 @@ void sequence_append(Sequence_Ast *seq, Ast *stmt)
 /* Procedure                                                    */
 /* ------------------------------------------------------------ */
 
-Ast *make_procedure_ast(char *name, Data_Type return_type, Ast_List *params, int has_body, Ast *body, int line)
+Ast *make_procedure_ast(char *name, Data_Type return_type, Ast_List *params, int local_var_bytes, int has_body, Ast *body, int line)
 {
     Procedure_Ast *node = checked_malloc(sizeof(Procedure_Ast));
 
@@ -340,6 +340,8 @@ Ast *make_procedure_ast(char *name, Data_Type return_type, Ast_List *params, int
     node->name = strdup(name);
     node->return_type = return_type;
     node->params = params;
+    node->locals = NULL;
+    node->local_var_bytes = local_var_bytes;
     node->has_body = has_body;
     node->body = body;
 

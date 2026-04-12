@@ -1,0 +1,14 @@
+**PROCEDURE: main
+**BEGIN: RTL Statements
+    call f_
+    call g_
+    iLoad:  v0 <- 2
+    iLoad:  t1 <- 1
+    sgt:    t0 <- v0, t1
+    store:  stemp0 <- t0
+    goto:   Label0
+
+Label0:
+    load:   v1 <- stemp0
+    return: v1
+**END: RTL Statements

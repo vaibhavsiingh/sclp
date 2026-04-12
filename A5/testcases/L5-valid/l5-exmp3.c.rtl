@@ -1,0 +1,25 @@
+**PROCEDURE: f
+**BEGIN: RTL Statements
+    iLoad.d: f2 <- 3.5
+    store.d: stemp0 <- f2
+    goto:   Label0
+
+Label0:
+    load.d: f0 <- stemp0
+    return: f0
+**END: RTL Statements
+
+**PROCEDURE: main
+**BEGIN: RTL Statements
+    iLoad.d: f2 <- 2.0
+    store.d: r <- f2
+    iLoad:  v0 <- 3
+    push:   v0
+    iLoad:  v0 <- 2
+    push:   v0
+    f0 = call f_
+    pop
+    pop
+    move.d: f2 <- f0
+    store.d: r <- f2
+**END: RTL Statements

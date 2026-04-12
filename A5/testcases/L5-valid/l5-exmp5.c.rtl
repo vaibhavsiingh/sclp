@@ -1,9 +1,9 @@
 **PROCEDURE: func1
 **BEGIN: RTL Statements
     iLoad:  v0 <- 5
-    store:  l2 <- v0
+    store:  i2 <- v0
     iLoad.d: f2 <- 5.0
-    store.d: fl2 <- f2
+    store.d: f2 <- f2
 **END: RTL Statements
 
 **PROCEDURE: func2
@@ -13,11 +13,11 @@
     add:    t0 <- v0, t1
     store:  a <- t0
     iLoad:  v0 <- 5
-    store:  l1 <- v0
+    store:  i1 <- v0
     load:   v0 <- a
-    load:   t1 <- l1
+    load:   t1 <- i1
     add:    t0 <- v0, t1
-    load:   t1 <- l2
+    load:   t1 <- i2
     add:    v0 <- t0, t1
     iLoad:  t1 <- 2
     add:    t0 <- v0, t1
@@ -32,8 +32,8 @@ Label0:
 **PROCEDURE: func3
 **BEGIN: RTL Statements
     load.d: f2 <- b
-    load.d: f6 <- fl2
-    mul.d:    f4 <- f2, f6
+    load.d: f6 <- f2
+    add.d:    f4 <- f2, f6
     store.d: b <- f4
     load.d: f2 <- c
     iLoad.d: f6 <- 10.5
@@ -53,9 +53,9 @@ Label1:
 **PROCEDURE: func4
 **BEGIN: RTL Statements
     iLoad:  v0 <- 4
-    store:  l1 <- v0
-    load:   v0 <- l1
-    load:   t1 <- l1
+    store:  i1 <- v0
+    load:   v0 <- i1
+    load:   t1 <- i1
     add:    t0 <- v0, t1
     store:  stemp0 <- t0
     goto:   Label2
@@ -70,35 +70,35 @@ Label2:
     call func1_
     v1 = call func4_
     move:   v0 <- v1
-    store:  l2 <- v0
-    load:   v0 <- l2
+    store:  i2 <- v0
+    load:   v0 <- i2
     push:   v0
-    load.d: f2 <- fl2
+    load.d: f2 <- f2
     push:   f2
-    load:   v0 <- l1
+    load:   v0 <- i1
     push:   v0
     v1 = call func2_
     pop
     pop
     pop
     move:   v0 <- v1
-    store:  l2 <- v0
-    load.d: f2 <- fl2
+    store:  i2 <- v0
+    load.d: f2 <- f2
     push:   f2
-    load.d: f2 <- fl2
+    load.d: f2 <- f1
     push:   f2
-    load:   v0 <- l1
+    load:   v0 <- i1
     push:   v0
     f0 = call func3_
     pop
     pop
     pop
     move.d: f2 <- f0
-    store.d: fl2 <- f2
+    store.d: f2 <- f2
     iLoad:  v0 <- 3
-    load.d: f12 <- fl1
+    load.d: f12 <- f1
     write
     iLoad:  v0 <- 3
-    load.d: f12 <- fl2
+    load.d: f12 <- f2
     write
 **END: RTL Statements

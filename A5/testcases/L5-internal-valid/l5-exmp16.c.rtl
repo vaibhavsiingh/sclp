@@ -1,0 +1,47 @@
+**PROCEDURE: main
+**BEGIN: RTL Statements
+    load:   v0 <- a
+    load:   t1 <- b
+    mul:    t0 <- v0, t1
+    store:  c <- t0
+    call p_
+    call p_
+    load:   v0 <- a
+    load:   t1 <- b
+    mul:    t0 <- v0, t1
+    store:  a <- t0
+**END: RTL Statements
+
+**PROCEDURE: p
+**BEGIN: RTL Statements
+    iLoad:  v0 <- 1
+    iLoad:  t1 <- 2
+    slt:    t0 <- v0, t1
+    not:    v0 <- t0
+    bgtz:   v0, Label1
+    load:   v0 <- a
+    load:   t1 <- b
+    mul:    t0 <- v0, t1
+    store:  a <- t0
+    goto:   Label0
+
+Label1:
+    iLoad:  v0 <- 1
+    iLoad:  t1 <- 4
+    slt:    t0 <- v0, t1
+    not:    v0 <- t0
+    bgtz:   v0, Label3
+    load:   v0 <- a
+    load:   t1 <- b
+    mul:    t0 <- v0, t1
+    store:  c <- t0
+    load:   v0 <- a
+    store:  c <- v0
+    goto:   Label2
+
+Label3:
+
+Label2:
+
+Label0:
+**END: RTL Statements

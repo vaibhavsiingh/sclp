@@ -10,7 +10,7 @@ void p()
     {
         c = a * b;
         c = a;
-    }
+    }   
 }
 
 void main()
