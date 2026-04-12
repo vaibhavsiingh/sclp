@@ -51,6 +51,7 @@ Symbol_Table_Entry *insert_symbol(char *name, Data_Type type);
 Symbol_Table_Entry *lookup_symbol(char *name);
 Symbol_Table_Entry *lookup_symbol_any_scope(const char *name);
 void update_symbol_scope(Symbol_Table_Entry *entry, Scope_Type new_scope);
+Symbol_Table_Entry *get_global_symbol_table(void);
 
 void clear_local_scope();
 

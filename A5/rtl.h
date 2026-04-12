@@ -133,5 +133,6 @@ typedef struct
 Proc_Rtl_Block *rtl_collect_proc_blocks(Ast *root, int *out_count);
 void rtl_free_proc_blocks(Proc_Rtl_Block *blocks, int block_count);
 Data_Type lookup_symbol_type_safe(const char *name);
+void rtl_emit_string_literals(FILE *out);
 
 #endif

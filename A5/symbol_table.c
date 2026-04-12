@@ -13,6 +13,26 @@ static Function_Entry *function_table = NULL;
 
 static Scope_Type current_scope = GLOBAL_SCOPE;
 
+static void append_symbol_entry(Symbol_Table_Entry **table, Symbol_Table_Entry *entry)
+{
+    Symbol_Table_Entry *tail;
+
+    if (!table || !entry)
+        return;
+
+    entry->next = NULL;
+    if (!*table)
+    {
+        *table = entry;
+        return;
+    }
+
+    tail = *table;
+    while (tail->next)
+        tail = tail->next;
+    tail->next = entry;
+}
+
 /* -------- Initialization -------- */
 
 void init_symbol_table()
@@ -167,8 +187,13 @@ Symbol_Table_Entry *insert_symbol(char *name, Data_Type type)
     entry->type = type;
     entry->scope = current_scope;
 
-    entry->next = *table;
-    *table = entry;
+    if (current_scope == GLOBAL_SCOPE)
+        append_symbol_entry(table, entry);
+    else
+    {
+        entry->next = *table;
+        *table = entry;
+    }
 
     return entry;
 }
@@ -202,8 +227,18 @@ void update_symbol_scope(Symbol_Table_Entry *entry, Scope_Type new_scope)
     Symbol_Table_Entry **new_table =
         (new_scope == GLOBAL_SCOPE) ? &global_table : &local_table;
 
-    entry->next = *new_table;
-    *new_table = entry;
+    if (new_scope == GLOBAL_SCOPE)
+        append_symbol_entry(new_table, entry);
+    else
+    {
+        entry->next = *new_table;
+        *new_table = entry;
+    }
+}
+
+Symbol_Table_Entry *get_global_symbol_table(void)
+{
+    return global_table;
 }
 
 /* -------- Debug Print -------- */

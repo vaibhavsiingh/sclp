@@ -4,7 +4,7 @@ string x,z, y;
 string p(string y)
 {
     a = 2;
-    y = "hello";
+    y = "Hello";
     print b;
 
     if (a>c)
@@ -24,10 +24,10 @@ void main()
 {
     a = b + c;
 
-    while (c>d)
+    while (a>d)
     {
         a = a + 2;        
     }
-    z = "hello";
+    x = "hello";
     z = p(x);
 }

@@ -186,6 +186,23 @@ static void free_string_map(void)
     string_map_head = NULL;
 }
 
+static void emit_string_map_reverse(const StringMap *node, FILE *out)
+{
+    if (!node)
+        return;
+
+    emit_string_map_reverse(node->next, out);
+    fprintf(out, "%s: .asciiz %s\n", node->label, node->literal);
+}
+
+void rtl_emit_string_literals(FILE *out)
+{
+    if (!out)
+        return;
+
+    emit_string_map_reverse(string_map_head, out);
+}
+
 static void rtl_print_label(Rtl *rtl, FILE *out)
 {
     Rtl_Label *ins = (Rtl_Label *)rtl;
@@ -1420,36 +1437,8 @@ static void emit_tac_seq(const Tac_Seq *seq, RtlState *state, Rtl_Seq *out)
     }
 }
 
-// never used any where, so likhne ji jaroorat nhi h filhal toh
-static Rtl_Seq *tac_to_rtl_seq(Ast *root, char *procedure_name, size_t procedure_name_size)
-{
-    Rtl_Seq *seq;
-    RtlState state = {NULL, "", 0};
 
-    if (!root)
-    {
-        if (procedure_name && procedure_name_size > 0)
-            procedure_name[0] = '\0';
-        return rtl_seq_create();
-    }
 
-    ensure_tac(root);
-
-    seq = rtl_seq_create();
-    if (root->tac_code)
-        emit_tac_seq(root->tac_code, &state, seq);
-
-    if (procedure_name && procedure_name_size > 0)
-    {
-        if (state.has_procedure_name)
-            snprintf(procedure_name, procedure_name_size, "%s", state.procedure_name);
-        else
-            procedure_name[0] = '\0';
-    }
-
-    clear_all_temp_regs(&state);
-    return seq;
-}
 
 void rtl_reset_counters(void)
 {

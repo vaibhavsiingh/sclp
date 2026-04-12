@@ -4,33 +4,6 @@ b: .word 0
 c: .word 0
 
 .text
-.globl main
-main:
-    # Prologue begins
-    sw $ra, 0($sp)
-    sw $fp, -4($sp)
-    sub $fp, $sp, 4
-    sub $sp, $sp, 16
-    # Prologue ends
-
-    lw $v0, -4($fp)
-    lw $t1, -8($fp)
-    mul $t0, $v0, $t1
-    sw $t0, c
-    jal p
-    jal p
-    lw $v0, -4($fp)
-    lw $t1, -8($fp)
-    mul $t0, $v0, $t1
-    sw $t0, -4($fp)
-
-epilogue_main:
-    add $sp, $sp, 16
-    lw $fp, -4($sp)
-    lw $ra, 0($sp)
-    jr $ra
-
-.text
 .globl p
 p:
     # Prologue begins
@@ -69,6 +42,33 @@ Label0:
 
 epilogue_p:
     add $sp, $sp, 8
+    lw $fp, -4($sp)
+    lw $ra, 0($sp)
+    jr $ra
+
+.text
+.globl main
+main:
+    # Prologue begins
+    sw $ra, 0($sp)
+    sw $fp, -4($sp)
+    sub $fp, $sp, 4
+    sub $sp, $sp, 16
+    # Prologue ends
+
+    lw $v0, -4($fp)
+    lw $t1, -8($fp)
+    mul $t0, $v0, $t1
+    sw $t0, c
+    jal p
+    jal p
+    lw $v0, -4($fp)
+    lw $t1, -8($fp)
+    mul $t0, $v0, $t1
+    sw $t0, -4($fp)
+
+epilogue_main:
+    add $sp, $sp, 16
     lw $fp, -4($sp)
     lw $ra, 0($sp)
     jr $ra

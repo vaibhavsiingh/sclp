@@ -7,34 +7,8 @@
 #include "rtl.h"
 #include "symbol_table.h"
 
-/* ============================================================ */
-/* Utility Functions                                            */
-/* ============================================================ */
 
-static void *checked_malloc(size_t size)
-{
-    void *ptr = malloc(size);
-    if (!ptr)
-    {
-        fprintf(stderr, "Out of memory in SPIM generator\n");
-        exit(1);
-    }
-    return ptr;
-}
 
-static char *xstrdup(const char *s)
-{
-    size_t n;
-    char *p;
-
-    if (!s)
-        s = "";
-
-    n = strlen(s) + 1;
-    p = (char *)checked_malloc(n);
-    memcpy(p, s, n);
-    return p;
-}
 
 /* ============================================================ */
 /* Data Symbol Collection                                       */
@@ -69,226 +43,9 @@ static int is_register_name(const char *name)
     return 0;
 }
 
-static int is_integer_literal(const char *s)
-{
-    size_t i = 0;
 
-    if (!s || !*s)
-        return 0;
 
-    if (s[i] == '+' || s[i] == '-')
-        i++;
 
-    if (!isdigit((unsigned char)s[i]))
-        return 0;
-
-    for (; s[i] != '\0'; i++)
-    {
-        if (!isdigit((unsigned char)s[i]))
-            return 0;
-    }
-
-    return 1;
-}
-
-static int is_float_literal(const char *s)
-{
-    size_t i = 0;
-    int seen_digit = 0;
-    int seen_dot = 0;
-
-    if (!s || !*s)
-        return 0;
-
-    if (s[i] == '+' || s[i] == '-')
-        i++;
-
-    for (; s[i] != '\0'; i++)
-    {
-        if (isdigit((unsigned char)s[i]))
-        {
-            seen_digit = 1;
-            continue;
-        }
-
-        if (s[i] == '.')
-        {
-            if (seen_dot)
-                return 0;
-            seen_dot = 1;
-            continue;
-        }
-
-        return 0;
-    }
-
-    return seen_digit && seen_dot;
-}
-
-static int is_string_literal(const char *s)
-{
-    size_t len;
-
-    if (!s)
-        return 0;
-
-    len = strlen(s);
-    return len >= 2 && s[0] == '"' && s[len - 1] == '"';
-}
-
-static int is_temp_name(const char *s)
-{
-    size_t i = 0;
-
-    if (!s)
-        return 0;
-
-    if (strcmp(s, "extra") == 0)
-        return 1;
-
-    if (strncmp(s, "temp", 4) != 0)
-        return 0;
-
-    i = 4;
-    if (!isdigit((unsigned char)s[i]))
-        return 0;
-
-    for (; s[i] != '\0'; i++)
-    {
-        if (!isdigit((unsigned char)s[i]))
-            return 0;
-    }
-
-    return 1;
-}
-
-static int is_saved_temp_name(const char *s)
-{
-    size_t i = 0;
-
-    if (!s)
-        return 0;
-
-    if (strncmp(s, "stemp", 5) != 0)
-        return 0;
-
-    i = 5;
-    if (!isdigit((unsigned char)s[i]))
-        return 0;
-
-    for (; s[i] != '\0'; i++)
-    {
-        if (!isdigit((unsigned char)s[i]))
-            return 0;
-    }
-
-    return 1;
-}
-
-static int is_codegen_label_name(const char *name)
-{
-    size_t i;
-
-    if (!name)
-        return 0;
-
-    if (strncmp(name, "Label", 5) != 0)
-        return 0;
-
-    if (!isdigit((unsigned char)name[5]))
-        return 0;
-
-    for (i = 6; name[i] != '\0'; i++)
-    {
-        if (!isdigit((unsigned char)name[i]))
-            return 0;
-    }
-
-    return 1;
-}
-
-static int is_data_symbol_name(const char *name)
-{
-    if (!name || !*name)
-        return 0;
-    if (is_register_name(name))
-        return 0;
-    if (is_integer_literal(name) || is_float_literal(name) || is_string_literal(name))
-        return 0;
-    if (is_temp_name(name) || is_saved_temp_name(name))
-        return 0;
-    if (is_codegen_label_name(name))
-        return 0;
-    if (strncmp(name, "_str_", 5) == 0)
-        return 0;
-    return 1;
-}
-
-static void add_asm_symbol(Asm_Symbol **head, const char *name)
-{
-    Asm_Symbol *cur;
-    Asm_Symbol *prev = NULL;
-    Asm_Symbol *node;
-
-    if (!head || !is_data_symbol_name(name))
-        return;
-
-    for (cur = *head; cur; cur = cur->next)
-    {
-        if (strcmp(cur->name, name) == 0)
-            return;
-        if (strcmp(cur->name, name) > 0)
-            break;
-        prev = cur;
-    }
-
-    node = (Asm_Symbol *)checked_malloc(sizeof(Asm_Symbol));
-    node->name = xstrdup(name);
-    if (!prev)
-    {
-        node->next = *head;
-        *head = node;
-    }
-    else
-    {
-        node->next = prev->next;
-        prev->next = node;
-    }
-}
-
-static void free_asm_symbols(Asm_Symbol *head)
-{
-    Asm_Symbol *cur = head;
-
-    while (cur)
-    {
-        Asm_Symbol *next = cur->next;
-        free(cur->name);
-        free(cur);
-        cur = next;
-    }
-}
-
-static void collect_data_symbols_from_seq(const Rtl_Seq *seq, Asm_Symbol **head)
-{
-    Rtl *cur;
-
-    if (!seq || !head)
-        return;
-
-    for (cur = seq->head; cur; cur = cur->next)
-    {
-        if (cur->kind == RTL_OP2)
-        {
-            Rtl_Op2 *ins = (Rtl_Op2 *)cur;
-
-            if (strcmp(ins->op, "load") == 0 || strcmp(ins->op, "load.d") == 0)
-                add_asm_symbol(head, ins->src);
-            else if (strcmp(ins->op, "store") == 0 || strcmp(ins->op, "store.d") == 0)
-                add_asm_symbol(head, ins->dst);
-        }
-    }
-}
 
 /* ============================================================ */
 /* Local Variable Frame Addressing                             */
@@ -322,6 +79,64 @@ static int local_offset_for_symbol(const Procedure_Ast *proc, const char *name, 
     return 0;
 }
 
+static int param_offset_for_symbol(const Procedure_Ast *proc, const char *name, int *offset)
+{
+    Ast_List *cur;
+    int index = 0;
+
+    if (!proc || !name)
+        return 0;
+
+    cur = proc->params;
+    while (cur)
+    {
+        if (cur->stmt && cur->stmt->kind == AST_NAME)
+        {
+            Name_Ast *param = (Name_Ast *)cur->stmt;
+            index++;
+            if (param->entry && param->entry->name && strcmp(param->entry->name, name) == 0)
+            {
+                if (offset)
+                    *offset = 4 * (index + 1);
+                return 1;
+            }
+        }
+        cur = cur->next;
+    }
+
+    return 0;
+}
+
+static int saved_temp_offset_for_symbol(const Procedure_Ast *proc, const char *name, int *offset)
+{
+    const char *digits;
+    int idx = 0;
+    int base_local_bytes = 0;
+
+    if (!name || strncmp(name, "stemp", 5) != 0)
+        return 0;
+
+    digits = name + 5;
+    if (!isdigit((unsigned char)*digits))
+        return 0;
+
+    while (*digits)
+    {
+        if (!isdigit((unsigned char)*digits))
+            return 0;
+        idx = idx * 10 + (*digits - '0');
+        digits++;
+    }
+
+    if (proc)
+        base_local_bytes = proc->local_var_bytes;
+
+    if (offset)
+        *offset = -(base_local_bytes + 4 * (idx + 1));
+
+    return 1;
+}
+
 /* ============================================================ */
 /* Label Alias / Canonicalization                              */
 /* ============================================================ */
@@ -332,10 +147,6 @@ typedef struct LabelAlias
     char *to;
     struct LabelAlias *next;
 } LabelAlias;
-
-
-
-
 
 /* ============================================================ */
 /* SPIM Instruction Emission                                    */
@@ -384,6 +195,8 @@ static const char *strip_trailing_proc_suffix(const char *name)
 static void emit_spim_op2(FILE *out, const Rtl_Op2 *ins, const Procedure_Ast *proc)
 {
     int local_off = 0;
+    int param_off = 0;
+    int stemp_off = 0;
 
     if (strcmp(ins->op, "load") == 0)
     {
@@ -391,6 +204,10 @@ static void emit_spim_op2(FILE *out, const Rtl_Op2 *ins, const Procedure_Ast *pr
         fprint_reg(out, ins->dst);
         if (local_offset_for_symbol(proc, ins->src, &local_off))
             fprintf(out, ", %d($fp)\n", local_off);
+        else if (param_offset_for_symbol(proc, ins->src, &param_off))
+            fprintf(out, ", %d($fp)\n", param_off);
+        else if (saved_temp_offset_for_symbol(proc, ins->src, &stemp_off))
+            fprintf(out, ", %d($fp)\n", stemp_off);
         else
             fprintf(out, ", %s\n", ins->src);
     }
@@ -400,6 +217,10 @@ static void emit_spim_op2(FILE *out, const Rtl_Op2 *ins, const Procedure_Ast *pr
         fprint_reg(out, ins->dst);
         if (local_offset_for_symbol(proc, ins->src, &local_off))
             fprintf(out, ", %d($fp)\n", local_off);
+        else if (param_offset_for_symbol(proc, ins->src, &param_off))
+            fprintf(out, ", %d($fp)\n", param_off);
+        else if (saved_temp_offset_for_symbol(proc, ins->src, &stemp_off))
+            fprintf(out, ", %d($fp)\n", stemp_off);
         else
             fprintf(out, ", %s\n", ins->src);
     }
@@ -409,6 +230,10 @@ static void emit_spim_op2(FILE *out, const Rtl_Op2 *ins, const Procedure_Ast *pr
         fprint_operand(out, ins->src);
         if (local_offset_for_symbol(proc, ins->dst, &local_off))
             fprintf(out, ", %d($fp)\n", local_off);
+        else if (param_offset_for_symbol(proc, ins->dst, &param_off))
+            fprintf(out, ", %d($fp)\n", param_off);
+        else if (saved_temp_offset_for_symbol(proc, ins->dst, &stemp_off))
+            fprintf(out, ", %d($fp)\n", stemp_off);
         else
             fprintf(out, ", %s\n", ins->dst);
     }
@@ -418,6 +243,10 @@ static void emit_spim_op2(FILE *out, const Rtl_Op2 *ins, const Procedure_Ast *pr
         fprint_operand(out, ins->src);
         if (local_offset_for_symbol(proc, ins->dst, &local_off))
             fprintf(out, ", %d($fp)\n", local_off);
+        else if (param_offset_for_symbol(proc, ins->dst, &param_off))
+            fprintf(out, ", %d($fp)\n", param_off);
+        else if (saved_temp_offset_for_symbol(proc, ins->dst, &stemp_off))
+            fprintf(out, ", %d($fp)\n", stemp_off);
         else
             fprintf(out, ", %s\n", ins->dst);
     }
@@ -620,10 +449,10 @@ static void emit_spim_seq(FILE *out, const Rtl_Seq *seq, const char *proc_name, 
             const Rtl_Op1 *ins = (const Rtl_Op1 *)cur;
             if (strcmp(ins->op, "push") == 0)
             {
-                fprintf(out, "    sub $sp, $sp, 4\n");
                 fprintf(out, "    sw ");
                 fprint_operand(out, ins->src);
                 fprintf(out, ", 0($sp)\n");
+                fprintf(out, "    sub $sp, $sp, 4\n");
             }
             else if (strcmp(ins->op, "return") == 0)
             {
@@ -664,9 +493,7 @@ static void emit_spim_seq(FILE *out, const Rtl_Seq *seq, const char *proc_name, 
 
 void spim_generate(Ast *root, FILE *out)
 {
-    Rtl *cur;
-    Asm_Symbol *symbols = NULL;
-    Asm_Symbol *sym;
+    Symbol_Table_Entry *sym;
     Proc_Rtl_Block *blocks = NULL;
     int block_count = 0;
 
@@ -678,18 +505,17 @@ void spim_generate(Ast *root, FILE *out)
     if (!blocks || block_count == 0)
         return;
 
-    for (int i = 0; i < block_count; i++)
-        collect_data_symbols_from_seq(blocks[i].seq, &symbols);
-
     fputs(".data\n", out);
-    for (sym = symbols; sym; sym = sym->next)
+    for (sym = get_global_symbol_table(); sym; sym = sym->next)
     {
-        Data_Type t = lookup_symbol_type_safe(sym->name);
+        Data_Type t = sym->type;
         if (t == FLOAT_TYPE)
             fprintf(out, "%s: .float 0.0\n", sym->name);
         else
             fprintf(out, "%s: .word 0\n", sym->name);
     }
+
+    rtl_emit_string_literals(out);
 
     for (int i = 0; i < block_count; i++)
     {
@@ -698,7 +524,6 @@ void spim_generate(Ast *root, FILE *out)
         emit_spim_seq(out, blocks[i].seq, blocks[i].name, frame_size, proc, root);
     }
 
-    free_asm_symbols(symbols);
     rtl_free_proc_blocks(blocks, block_count);
 }
 
