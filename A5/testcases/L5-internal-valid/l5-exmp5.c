@@ -1,8 +1,7 @@
 int l1, l2;
 
-void func1();
 float fl1, fl2;
-
+void func1();
 int func2(int a, float b, int c);
 float func3(int p, float q, float r);
 
@@ -10,6 +9,8 @@ int func4(){
     l1 = 4;
     return l1 + l1;
 }
+
+
 
 void func1(){
     l2 = 5;

@@ -26,6 +26,7 @@ static Data_Type current_func_return_type = INT_TYPE;
 static int collecting_function_locals = 0;
 static int current_function_local_bytes = 0;
 static Ast_List *current_function_locals = NULL;
+static int seen_top_level_definition = 0;
 
 static void append_ast_list_node(Ast_List **head, Ast *stmt)
 {
@@ -168,6 +169,34 @@ static Procedure_Ast *find_matching_decl(Program_Ast *prog, const Procedure_Ast 
 
     return NULL;
 }
+
+static void merge_external_node(Program_Ast *prog, Ast *node)
+{
+    if (!prog || !node)
+        return;
+
+    if (node->kind == AST_PROCEDURE && ((Procedure_Ast *)node)->has_body)
+    {
+        Procedure_Ast *def_proc = (Procedure_Ast *)node;
+        Procedure_Ast *decl_proc = find_matching_decl(prog, def_proc);
+
+        if (decl_proc)
+        {
+            decl_proc->has_body = 1;
+            decl_proc->body = def_proc->body;
+            decl_proc->local_var_bytes = def_proc->local_var_bytes;
+            decl_proc->locals = def_proc->locals;
+        }
+        else
+        {
+            program_append(prog, node);
+        }
+    }
+    else
+    {
+        program_append(prog, node);
+    }
+}
 %}
 
 %union {
@@ -245,25 +274,20 @@ external_decl_list
             $$ = $1;
             if ($2) {
                 Ast *node = $2;
-                if (node->kind == AST_PROCEDURE && ((Procedure_Ast *)node)->has_body) {
-                    Procedure_Ast *def_proc = (Procedure_Ast *)node;
-                    Procedure_Ast *decl_proc = find_matching_decl((Program_Ast *)$$, def_proc);
 
-                    if (decl_proc) {
-                        decl_proc->has_body = 1;
-                        decl_proc->body = def_proc->body;
-                        decl_proc->local_var_bytes = def_proc->local_var_bytes;
-                        decl_proc->locals = def_proc->locals;
-                    } else {
-                        program_append((Program_Ast *)$$, node);
-                    }
-                } else {
-                    program_append((Program_Ast *)$$, node);
+                if (node->kind == AST_PROCEDURE && ((Procedure_Ast *)node)->has_body) {
+                    seen_top_level_definition = 1;
+                } else if (seen_top_level_definition) {
+                    yyerror("all declarations must be before function definitions");
+                    YYERROR;
                 }
+
+                merge_external_node((Program_Ast *)$$, node);
             }
             }
         | /* empty */
             {
+            seen_top_level_definition = 0;
             $$ = make_program_ast(yylineno);
             }
         ;

@@ -7,9 +7,6 @@
 #include "rtl.h"
 #include "symbol_table.h"
 
-
-
-
 /* ============================================================ */
 /* Data Symbol Collection                                       */
 /* ============================================================ */
@@ -43,16 +40,13 @@ static int is_register_name(const char *name)
     return 0;
 }
 
-
-
-
-
 /* ============================================================ */
 /* Local Variable Frame Addressing                             */
 /* ============================================================ */
 
 static int local_offset_for_symbol(const Procedure_Ast *proc, const char *name, int *offset)
 {
+
     Ast_List *cur;
     int slot = 0;
 
@@ -242,11 +236,11 @@ static void emit_spim_op2(FILE *out, const Rtl_Op2 *ins, const Procedure_Ast *pr
         fprintf(out, "    s.d ");
         fprint_operand(out, ins->src);
         if (local_offset_for_symbol(proc, ins->dst, &local_off))
-            fprintf(out, ", %d($fp)\n", local_off);
+            fprintf(out, ", %d($fp)1\n", local_off);
         else if (param_offset_for_symbol(proc, ins->dst, &param_off))
-            fprintf(out, ", %d($fp)\n", param_off);
+            fprintf(out, ", %d($fp)2\n", param_off);
         else if (saved_temp_offset_for_symbol(proc, ins->dst, &stemp_off))
-            fprintf(out, ", %d($fp)\n", stemp_off);
+            fprintf(out, ", %d($fp)3\n", stemp_off);
         else
             fprintf(out, ", %s\n", ins->dst);
     }
@@ -387,6 +381,16 @@ static int compute_frame_size_bytes(const Ast *root, const char *proc_name)
     return locals_size + 8 + return_size;
 }
 
+static int compare_proc_block_names(const void *lhs, const void *rhs)
+{
+    const Proc_Rtl_Block *left = (const Proc_Rtl_Block *)lhs;
+    const Proc_Rtl_Block *right = (const Proc_Rtl_Block *)rhs;
+    const char *left_name = (left && left->name) ? left->name : "";
+    const char *right_name = (right && right->name) ? right->name : "";
+
+    return strcmp(left_name, right_name);
+}
+
 static void emit_spim_seq(FILE *out, const Rtl_Seq *seq, const char *proc_name, int frame_size, const Procedure_Ast *proc, const Ast *root)
 {
     const Rtl *cur;
@@ -504,6 +508,8 @@ void spim_generate(Ast *root, FILE *out)
     blocks = rtl_collect_proc_blocks(root, &block_count);
     if (!blocks || block_count == 0)
         return;
+
+    qsort(blocks, (size_t)block_count, sizeof(*blocks), compare_proc_block_names);
 
     fputs(".data\n", out);
     for (sym = get_global_symbol_table(); sym; sym = sym->next)

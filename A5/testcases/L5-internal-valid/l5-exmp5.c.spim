@@ -1,11 +1,8 @@
 .data
-a: .word 0
-b: .float 0.0
-c: .float 0.0
-fl1: .float 0.0
-fl2: .float 0.0
 l1: .word 0
 l2: .word 0
+fl1: .float 0.0
+fl2: .float 0.0
 
 .text
 .globl func1
@@ -38,23 +35,23 @@ func2:
     sub $sp, $sp, 12
     # Prologue ends
 
-    lw $v0, a
+    lw $v0, 8($fp)
     li $t1, 10
     add $t0, $v0, $t1
-    sw $t0, a
+    sw $t0, 8($fp)
     li $v0, 5
     sw $v0, l1
-    lw $v0, a
+    lw $v0, 8($fp)
     lw $t1, l1
     add $t0, $v0, $t1
     lw $t1, l2
     add $v0, $t0, $t1
     li $t1, 2
     add $t0, $v0, $t1
-    sw $t0, stemp0
+    sw $t0, -4($fp)
     j Label0
 Label0:
-    lw $v1, stemp0
+    lw $v1, -4($fp)
     j epilogue_func2
 
 epilogue_func2:
@@ -84,10 +81,10 @@ func3:
     l.d $f2, b
     l.d $f6, c
     add.d $f4, $f2, $f6
-    s.d $f4, stemp0
+    s.d $f4, -4($fp)3
     j Label1
 Label1:
-    l.d $f0, stemp0
+    l.d $f0, -4($fp)
     j epilogue_func3
 
 epilogue_func3:
@@ -111,10 +108,10 @@ func4:
     lw $v0, l1
     lw $t1, l1
     add $t0, $v0, $t1
-    sw $t0, stemp0
+    sw $t0, -4($fp)
     j Label2
 Label2:
-    lw $v1, stemp0
+    lw $v1, -4($fp)
     j epilogue_func4
 
 epilogue_func4:
@@ -138,14 +135,14 @@ main:
     move $v0, $v1
     sw $v0, l2
     lw $v0, l2
-    sub $sp, $sp, 4
     sw $v0, 0($sp)
+    sub $sp, $sp, 4
     l.d $f2, fl2
-    sub $sp, $sp, 4
     sw $f2, 0($sp)
-    lw $v0, l1
     sub $sp, $sp, 4
+    lw $v0, l1
     sw $v0, 0($sp)
+    sub $sp, $sp, 4
     jal func2
     add $sp, $sp, 4
     add $sp, $sp, 4
@@ -153,14 +150,14 @@ main:
     move $v0, $v1
     sw $v0, l2
     l.d $f2, fl2
-    sub $sp, $sp, 4
     sw $f2, 0($sp)
+    sub $sp, $sp, 4
     l.d $f2, fl2
-    sub $sp, $sp, 4
     sw $f2, 0($sp)
-    lw $v0, l1
     sub $sp, $sp, 4
+    lw $v0, l1
     sw $v0, 0($sp)
+    sub $sp, $sp, 4
     jal func3
     add $sp, $sp, 4
     add $sp, $sp, 4
