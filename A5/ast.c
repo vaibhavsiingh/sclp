@@ -7,6 +7,7 @@
 #include "symbol_table.h"
 
 static int check_assignment_ast(Ast *ast);
+
 static int check_name_ast(Ast *ast);
 static int check_number_ast(Ast *ast);
 static int check_binary_ast(Ast *ast);
